@@ -1,4 +1,4 @@
-// server.js – API + file host
+// server.js — Static site + API + file host in one process
 
 import express   from 'express';
 import Database  from 'better-sqlite3';
@@ -6,55 +6,61 @@ import cors      from 'cors';
 import path      from 'path';
 import fs        from 'fs';
 
-const db = new Database('macros.db');
+/* ---------- 0. config ---------- */
+const PORT       = process.env.PORT || 8000;           // Koyeb forwards 8000
+const MACROS_DIR = process.env.MACROS_DIR              // /persistent/macros
+                 || path.resolve('macros');
+const PUBLIC_DIR = path.resolve('public');             // index.html folder
+const MACROS     = ['better-tiny-task', 'grow-garden'];
 
-/* ---------- 1. one-time table ---------- */
+/* ---------- 1. SQLite ---------- */
+fs.mkdirSync(MACROS_DIR, { recursive: true });
+const db = new Database(path.join(MACROS_DIR, 'macros.db'));
 db.prepare(`
   CREATE TABLE IF NOT EXISTS stats (
     id        TEXT PRIMARY KEY,
     downloads INTEGER DEFAULT 0
   )
 `).run();
-
-/* ---------- 2. macros folder ---------- */
-const macrosDir = path.resolve('macros');
-fs.mkdirSync(macrosDir, { recursive: true });
-
-const MACROS = ['better-tiny-task', 'grow-garden'];
 MACROS.forEach(id => {
-  db.prepare('INSERT OR IGNORE INTO stats (id, downloads) VALUES (?,0)').run(id);
-  const stub = path.join(macrosDir, `${id}.zip`);
+  db.prepare('INSERT OR IGNORE INTO stats (id) VALUES (?)').run(id);
+  const stub = path.join(MACROS_DIR, `${id}.zip`);
   if (!fs.existsSync(stub)) fs.writeFileSync(stub, `Placeholder for ${id}`);
 });
 
-/* ---------- 3. app ---------- */
+/* ---------- 2. Express ---------- */
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/macros', express.static(macrosDir));   // direct GET fallback
 
-/* --- GET /stats  (JSON counters) --- */
-app.get('/stats', (req, res) => {
-  const rows   = db.prepare('SELECT id, downloads FROM stats').all();
-  const macros = Object.fromEntries(rows.map(r => [r.id, r.downloads]));
-  const total  = rows.reduce((s, r) => s + r.downloads, 0);
-  res.json({ total, macros });
+/* Static site */
+app.use(express.static(PUBLIC_DIR));           // index.html, JS, images
+
+/* Direct ZIP access */
+app.use('/macros', express.static(MACROS_DIR));
+
+/* GET /stats */
+app.get('/stats', (_req, res) => {
+  const rows = db.prepare('SELECT id, downloads FROM stats').all();
+  res.json({
+    total:  rows.reduce((s, r) => s + r.downloads, 0),
+    macros: Object.fromEntries(rows.map(r => [r.id, r.downloads]))
+  });
 });
 
-/* --- POST /download/:id  (count + stream ZIP) --- */
+/* POST /download/:id */
 app.post('/download/:id', (req, res) => {
   const { id } = req.params;
+  if (!MACROS.includes(id)) return res.status(404).send('Unknown macro');
 
-  const updated = db.prepare(
+  db.prepare(
     'UPDATE stats SET downloads = downloads + 1 WHERE id = ?'
-  ).run(id).changes;
+  ).run(id);
 
-  if (!updated) return res.status(404).send('Unknown macro');
-
-  const filePath = path.join(macrosDir, `${id}.zip`);
-  return res.download(filePath);         // streams the real file
+  res.download(path.join(MACROS_DIR, `${id}.zip`));
 });
 
-/* ---------- 4. launch ---------- */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API running on :${PORT}`));
+/* ---------- 3. start ---------- */
+app.listen(PORT, () =>
+  console.log(`🌐  Site + API listening on :${PORT}`)
+);
