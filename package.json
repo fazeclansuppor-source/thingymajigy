@@ -3,14 +3,16 @@
   "version": "1.1.0",
   "type": "module",
   "scripts": {
+    "start":  "node server.js & node site.js & node bot.js & wait",
     "server": "node server.js",
     "bot":    "node bot.js",
     "site":   "node site.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
-    "cors": "^2.8.5",
-    "discord.js": "^14.14.1",
-    "express": "^4.19.2"
+    "cors":           "^2.8.5",
+    "discord.js":     "^14.14.1",
+    "express":        "^4.19.2",
+    "node-fetch":     "^3.3.2"
   }
 }
