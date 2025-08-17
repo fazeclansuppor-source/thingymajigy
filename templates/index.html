@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MacroStack – Free Macros for Everyone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/ScrollTrigger.min.js"></script>
+    <style>
+        :root {
+            --neon-purple: #c724f8;
+            --neon-cyan: #00f0ff;
+            --neon-pink: #ff2d75;
+            --neon-green: #00ff88;
+        }
+        
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: #0a0a12;
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+        
+        .font-tech {
+            font-family: 'Orbitron', sans-serif;
+        }
+        
+        .glow-purple {
+            text-shadow: 0 0 10px var(--neon-purple), 0 0 20px var(--neon-purple);
+        }
+        
+        .glow-cyan {
+            text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+        }
+        
+        .glow-pink {
+            text-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+        }
+        
+        .glow-green {
+            text-shadow: 0 0 10px var(--neon-green), 0 0 20px var(--neon-green);
+        }
+        
+        .btn-glow-green {
+            box-shadow: 0 0 15px var(--neon-green);
+        }
+        
+        .btn-glow-orange {
+            box-shadow: 0 0 15px #ff7b00;
+        }
+        
+        .btn-glow-blue {
+            box-shadow: 0 0 15px #0066ff;
+        }
+        
+        .card-hover {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-5px) rotate(1deg);
+            box-shadow: 0 10px 20px rgba(0, 240, 255, 0.3);
+        }
+        
+        .download-btn {
+            transition: all 0.3s ease;
+        }
+        
+        .download-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px var(--neon-green);
+        }
+        
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+        }
+        
+        .particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+        
+        .particle {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+        }
+        
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        
+        .floating {
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        .counter {
+            font-variant-numeric: tabular-nums;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Particles Background -->
+    <div id="particles" class="particles"></div>
+    
+    <!-- Header -->
+    <header class="fixed w-full z-50 gradient-bg border-b border-gray-800">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center">
+                <h1 class="font-tech text-2xl md:text-3xl font-bold text-white glow-purple">
+                    Macro<span class="glow-cyan">Stack</span>
+                </h1>
+            </div>
+            <nav class="hidden md:flex space-x-6">
+                <a href="#about" class="text-white hover:text-purple-300 transition duration-300 font-medium">About</a>
+                <a href="#downloads" class="text-white hover:text-cyan-300 transition duration-300 font-medium">Download</a>
+                <a href="#faq" class="text-white hover:text-pink-300 transition duration-300 font-medium">FAQ</a>
+                <a href="#leaderboard" class="text-white hover:text-green-300 transition duration-300 font-medium">Leaderboard</a>
+                <a href="#updates" class="text-white hover:text-blue-300 transition duration-300 font-medium">Updates</a>
+                <a href="#community" class="text-white hover:text-yellow-300 transition duration-300 font-medium">Community</a>
+                <a href="#terms" class="text-white hover:text-red-300 transition duration-300 font-medium">Terms</a>
+            </nav>
+            <button id="mobile-menu-button" class="md:hidden text-white focus:outline-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+            </button>
+        </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="md:hidden hidden gradient-bg border-t border-gray-800">
+            <div class="container mx-auto px-4 py-3 flex flex-col space-y-3">
+                <a href="#about" class="text-white hover:text-purple-300 transition duration-300 font-medium">About</a>
+                <a href="#downloads" class="text-white hover:text-cyan-300 transition duration-300 font-medium">Download</a>
+                <a href="#faq" class="text-white hover:text-pink-300 transition duration-300 font-medium">FAQ</a>
+                <a href="#leaderboard" class="text-white hover:text-green-300 transition duration-300 font-medium">Leaderboard</a>
+                <a href="#updates" class="text-white hover:text-blue-300 transition duration-300 font-medium">Updates</a>
+                <a href="#community" class="text-white hover:text-yellow-300 transition duration-300 font-medium">Community</a>
+                <a href="#terms" class="text-white hover:text-red-300 transition duration-300 font-medium">Terms</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 px-4 gradient-bg relative overflow-hidden">
+        <div class="container mx-auto flex flex-col md:flex-row items-center">
+            <div class="md:w-1/2 mb-10 md:mb-0">
+                <h1 class="font-tech text-4xl md:text-6xl font-bold text-white mb-4 glow-purple">
+                    Macro<span class="glow-cyan">Stack</span>
+                </h1>
+                <h2 class="text-xl md:text-2xl text-gray-300 mb-8">
+                    Creative, powerful, and free macros for games and apps.
+                </h2>
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                    <a href="#downloads" class="px-8 py-3 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 text-center download-btn">
+                        Download
+                    </a>
+                    <a href="#leaderboard" class="px-8 py-3 bg-orange-500 text-white font-bold rounded-full btn-glow-orange hover:bg-orange-600 transition duration-300 text-center">
+                        Leaderboard
+                    </a>
+                    <a href="#updates" class="px-8 py-3 bg-blue-500 text-white font-bold rounded-full btn-glow-blue hover:bg-blue-600 transition duration-300 text-center">
+                        Updates
+                    </a>
+                </div>
+            </div>
+            <div class="md:w-1/2 relative">
+                <div class="relative max-w-md mx-auto floating">
+                    <div class="absolute inset-0 bg-purple-500 rounded-2xl opacity-20 blur-lg"></div>
+                    <div class="relative bg-gray-900 bg-opacity-70 backdrop-blur-sm rounded-2xl overflow-hidden border border-gray-700">
+                        <div class="p-4 bg-gray-800 border-b border-gray-700 flex space-x-2">
+                            <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                            <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                            <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                        </div>
+                        <div class="p-6">
+                            <div id="macro-slideshow" class="relative h-64 overflow-hidden rounded-lg">
+                                <div class="macro-slide absolute inset-0 flex items-center justify-center bg-gray-800 transition-opacity duration-500 opacity-0">
+                                    <img src="https://via.placeholder.com/400x250/1a1a2e/00f0ff?text=Better+Tiny+Task" alt="Macro Preview" class="rounded-lg">
+                                </div>
+                                <div class="macro-slide absolute inset-0 flex items-center justify-center bg-gray-800 transition-opacity duration-500 opacity-0">
+                                    <img src="https://via.placeholder.com/400x250/1a1a2e/ff2d75?text=Grow+a+Garden" alt="Macro Preview" class="rounded-lg">
+                                </div>
+                                <div class="macro-slide absolute inset-0 flex items-center justify-center bg-gray-800 transition-opacity duration-500 opacity-0">
+                                    <img src="https://via.placeholder.com/400x250/1a1a2e/c724f8?text=Auto+Clicker+Pro" alt="Macro Preview" class="rounded-lg">
+                                </div>
+                                <div class="macro-slide absolute inset-0 flex items-center justify-center bg-gray-800 transition-opacity duration-500 opacity-0">
+                                    <img src="https://via.placeholder.com/400x250/1a1a2e/00ff88?text=Keyboard+Wizard" alt="Macro Preview" class="rounded-lg">
+                                </div>
+                            </div>
+                            <div class="flex justify-center mt-4 space-x-2">
+                                <button class="slide-dot w-3 h-3 rounded-full bg-gray-600 focus:outline-none" data-index="0"></button>
+                                <button class="slide-dot w-3 h-3 rounded-full bg-gray-600 focus:outline-none" data-index="1"></button>
+                                <button class="slide-dot w-3 h-3 rounded-full bg-gray-600 focus:outline-none" data-index="2"></button>
+                                <button class="slide-dot w-3 h-3 rounded-full bg-gray-600 focus:outline-none" data-index="3"></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto text-center">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 glow-cyan">
+                Our Impact
+            </h2>
+            <p class="text-gray-400 mb-12 max-w-2xl mx-auto">
+                Real numbers, no fake stats. Every download counts.
+            </p>
+            <div class="bg-gray-800 bg-opacity-50 rounded-xl p-8 max-w-4xl mx-auto border border-gray-700">
+                <div class="flex flex-col md:flex-row justify-center items-center space-y-8 md:space-y-0 md:space-x-16">
+                    <div class="text-center">
+                        <div class="font-tech text-5xl md:text-6xl font-bold text-white mb-2 counter glow-green" id="download-counter">0</div>
+                        <div class="text-gray-400 uppercase text-sm tracking-wider">Total Downloads</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="font-tech text-5xl md:text-6xl font-bold text-white mb-2 counter glow-cyan" id="macro-counter">0</div>
+                        <div class="text-gray-400 uppercase text-sm tracking-wider">Available Macros</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="font-tech text-5xl md:text-6xl font-bold text-white mb-2 counter glow-pink" id="user-counter">0</div>
+                        <div class="text-gray-400 uppercase text-sm tracking-wider">Active Users</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Macro Store Section -->
+    <section id="downloads" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 text-center glow-purple">
+                Available Macros
+            </h2>
+            <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
+                Instant downloads, free forever. No hidden fees, no premium tiers.
+            </p>
+            
+            
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+    <!-- Better Tiny Task -->
+    <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 card-hover">
+        <div class="p-4 bg-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Better Tiny Task</h3>
+            <span class="bg-green-500 text-white text-xs px-2 py-1 rounded-full">FREE</span>
+        </div>
+        <div class="p-4">
+            <img src="https://via.placeholder.com/400x250/1a1a2e/00f0ff?text=Better+Tiny+Task" alt="Macro Preview" class="w-full h-40 object-cover rounded-lg mb-4">
+            <p class="text-gray-400 text-sm mb-4">Enhanced version of TinyTask with more features and customization options.</p>
+            <button class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="better-tiny-task">
+                Download (v2.1.4)
+            </button>
+        </div>
+    </div>
+
+    <!-- Grow a Garden -->
+    <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 card-hover">
+        <div class="p-4 bg-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Grow a Garden Macro</h3>
+            <span class="bg-green-500 text-white text-xs px-2 py-1 rounded-full">FREE</span>
+        </div>
+        <div class="p-4">
+            <img src="https://via.placeholder.com/400x250/1a1a2e/ff2d75?text=Grow+a+Garden" alt="Macro Preview" class="w-full h-40 object-cover rounded-lg mb-4">
+            <p class="text-gray-400 text-sm mb-4">Automate your gardening tasks in popular farming simulation games.</p>
+            <button class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="grow-garden">
+                Download (v1.3.2)
+            </button>
+        </div>
+    </div>
+
+    <!-- Placeholder 1 -->
+    <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 card-hover opacity-60">
+        <div class="p-4 bg-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Placeholder Macro</h3>
+            <span class="bg-gray-500 text-white text-xs px-2 py-1 rounded-full">SOON</span>
+        </div>
+        <div class="p-4">
+            <img src="https://via.placeholder.com/400x250/1a1a2e/666666?text=Coming+Soon" alt="Placeholder" class="w-full h-40 object-cover rounded-lg mb-4">
+            <p class="text-gray-400 text-sm mb-4">Reserved for a future release.</p>
+            <button class="w-full px-4 py-2 bg-gray-600 text-white font-bold rounded-full cursor-not-allowed" disabled>
+                Unavailable
+            </button>
+        </div>
+    </div>
+
+    <!-- Placeholder 2 -->
+    <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 card-hover opacity-60">
+        <div class="p-4 bg-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Placeholder Macro</h3>
+            <span class="bg-gray-500 text-white text-xs px-2 py-1 rounded-full">SOON</span>
+        </div>
+        <div class="p-4">
+            <img src="https://via.placeholder.com/400x250/1a1a2e/666666?text=Coming+Soon" alt="Placeholder" class="w-full h-40 object-cover rounded-lg mb-4">
+            <p class="text-gray-400 text-sm mb-4">Reserved for a future release.</p>
+            <button class="w-full px-4 py-2 bg-gray-600 text-white font-bold rounded-full cursor-not-allowed" disabled>
+                Unavailable
+            </button>
+        </div>
+    </div>
+
+    <!-- Placeholder 3 -->
+    <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 card-hover opacity-60">
+        <div class="p-4 bg-gray-700 flex justify-between items-center">
+            <h3 class="font-bold text-white">Placeholder Macro</h3>
+            <span class="bg-gray-500 text-white text-xs px-2 py-1 rounded-full">SOON</span>
+        </div>
+        <div class="p-4">
+            <img src="https://via.placeholder.com/400x250/1a1a2e/666666?text=Coming+Soon" alt="Placeholder" class="w-full h-40 object-cover rounded-lg mb-4">
+            <p class="text-gray-400 text-sm mb-4">Reserved for a future release.</p>
+            <button class="w-full px-4 py-2 bg-gray-600 text-white font-bold rounded-full cursor-not-allowed" disabled>
+                Unavailable
+            </button>
+        </div>
+    </div>
+</div>
+
+        </div>
+    </section>
+
+    <!-- Leaderboard Section -->
+    <section id="leaderboard" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 text-center glow-green">
+                Top Downloads
+            </h2>
+            <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
+                See which macros our community loves the most.
+            </p>
+            
+            <div class="bg-gray-800 bg-opacity-50 rounded-xl overflow-hidden border border-gray-700 max-w-4xl mx-auto">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Rank</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Macro</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Downloads</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Action</th>
+                            </tr>
+                        </thead>
+                        
+<tbody class="divide-y divide-gray-700">
+    <tr>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-yellow-500 rounded-full font-bold text-white">1</div>
+            </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-10 w-10">
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40/1a1a2e/00f0ff?text=BT" alt="">
+                </div>
+                <div class="ml-4">
+                    <div class="text-sm font-medium text-white">Better Tiny Task</div>
+                    <div class="text-sm text-gray-400">v2.1.4</div>
+                </div>
+            </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="text-sm text-white counter" id="leaderboard-better-tiny-task">0</div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+            <button class="px-4 py-1 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="better-tiny-task">
+                Download
+            </button>
+        </td>
+    </tr>
+    <tr>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-gray-300 rounded-full font-bold text-gray-800">2</div>
+            </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 h-10 w-10">
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40/1a1a2e/ff2d75?text=GG" alt="">
+                </div>
+                <div class="ml-4">
+                    <div class="text-sm font-medium text-white">Grow a Garden Macro</div>
+                    <div class="text-sm text-gray-400">v1.3.2</div>
+                </div>
+            </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+            <div class="text-sm text-white counter" id="leaderboard-grow-garden">0</div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+            <button class="px-4 py-1 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="grow-garden">
+                Download
+            </button>
+        </td>
+    </tr>
+    <tr>
+        <td class="px-6 py-4 whitespace-nowrap" colspan="4">
+            <div class="text-center text-gray-500">More macros coming soon…</div>
+        </td>
+    </tr>
+</tbody>
+
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Updates Section -->
+    <section id="updates" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto max-w-4xl">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 text-center glow-blue">
+                Latest Updates
+            </h2>
+            <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
+                Stay informed about the newest features and improvements.
+            </p>
+            
+            <div class="space-y-6">
+                <!-- Update 1 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-xl font-bold text-white mb-1">Better Tiny Task v2.1.4</h3>
+                            <div class="text-sm text-gray-400 mb-3">Released: June 15, 2023</div>
+                        </div>
+                        <span class="bg-blue-500 text-white text-xs px-2 py-1 rounded-full">MAJOR</span>
+                    </div>
+                    <div class="text-gray-300">
+                        <ul class="list-disc pl-5 space-y-1">
+                            <li>Improved playback accuracy by 50-75%</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Update 2 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-xl font-bold text-white mb-1">Placeholder</h3>
+                            <div class="text-sm text-gray-400 mb-3">Released: 00000</div>
+                        </div>
+                        <span class="bg-purple-500 text-white text-xs px-2 py-1 rounded-full"></span>
+                    </div>
+                    <div class="text-gray-300">
+                        <ul class="list-disc pl-5 space-y-1">
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Update 3 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-xl font-bold text-white mb-1">placeholder0</h3>
+                            <div class="text-sm text-gray-400 mb-3">Released: 00000</div>
+                        </div>
+                        <span class="bg-green-500 text-white text-xs px-2 py-1 rounded-full"></span>
+                    </div>
+                    <div class="text-gray-300">
+                        <ul class="list-disc pl-5 space-y-1">
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                            <li>placeholder</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto max-w-4xl">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 text-center glow-pink">
+                Frequently Asked Questions
+            </h2>
+            <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
+                Get answers to common questions about MacroStack.
+            </p>
+            
+            <div class="space-y-4">
+                <!-- FAQ Item 1 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
+                    <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-white">Are these macros really free?</h3>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="accordion-content px-6">
+                        <div class="pb-4 text-gray-300">
+                            Yes! All macros on MacroStack are completely free with no hidden costs, premium tiers, or paywalls. We believe in open access to useful tools for everyone.
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- FAQ Item 2 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
+                    <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-white">Is MacroStack safe to use?</h3>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="accordion-content px-6">
+                        <div class="pb-4 text-gray-300">
+                            All macros are scanned for malware before being made available. However, always use macros responsibly and check the terms of service for any games or applications you use them with.
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- FAQ Item 3 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
+                    <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-white">How do I request a new macro?</h3>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="accordion-content px-6">
+                        <div class="pb-4 text-gray-300">
+                            Join our community Discord (linked in the Community section) and post your request in the #macro-requests channel. Our developers and community members regularly check for new ideas.
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- FAQ Item 4 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
+                    <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-white">Can I contribute my own macros?</h3>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="accordion-content px-6">
+                        <div class="pb-4 text-gray-300">
+                            Absolutely! We welcome community contributions. Contact us through Discord with your macro idea or completed macro, and after review we'll add it to the collection with credit to you.
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- FAQ Item 5 -->
+                <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
+                    <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-bold text-white">Why do you offer these for free?</h3>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="accordion-content px-6">
+                        <div class="pb-4 text-gray-300">
+                            We believe in the power of open-source and community-driven projects. Our reward is seeing people benefit from our work and the creative ways macros are used.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto max-w-4xl text-center">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 glow-purple">
+                About MacroStack
+            </h2>
+            <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-8 mt-8">
+                <p class="text-gray-300 text-lg leading-relaxed">
+                    MacroStack is a creative hub for free macros, built for fun and powered by community sharing. 
+                    Our mission is to provide high-quality automation tools without the premium paywalls or fake statistics 
+                    that plague other macro sites. Everything here is genuinely free, created by enthusiasts for enthusiasts.
+                </p>
+                <p class="text-gray-300 text-lg leading-relaxed mt-4">
+                    Founded in 2021 by a group of automation enthusiasts, MacroStack has grown into a thriving community 
+                    of developers and users who believe in open access to useful tools. Whether you're a gamer looking 
+                    to automate repetitive tasks or a power user wanting to streamline your workflow, you'll find 
+                    something useful here.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Community Section -->
+    <section id="community" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto max-w-4xl text-center">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 glow-cyan">
+                Join Our Community
+            </h2>
+            <p class="text-gray-400 mb-8 max-w-2xl mx-auto">
+                Connect with other macro enthusiasts, share ideas, and get support.
+            </p>
+            
+            <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-8 max-w-md mx-auto">
+                <div class="flex justify-center mb-6">
+                    <svg class="w-16 h-16 text-indigo-500" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.128 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418z"></path>
+                    </svg>
+                </div>
+                <h3 class="text-xl font-bold text-white mb-4">MacroStack Discord</h3>
+                <p class="text-gray-300 mb-6">
+                    Join our growing community of macro enthusiasts, developers, and power users. Get help, share ideas, and stay updated on new releases.
+                </p>
+                <a href="https://discord.gg/macrostack" target="_blank" class="inline-block px-8 py-3 bg-indigo-600 text-white font-bold rounded-full hover:bg-indigo-700 transition duration-300">
+                    Join Now
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Terms Section -->
+    <section id="terms" class="py-16 px-4 bg-gray-900">
+        <div class="container mx-auto max-w-4xl">
+            <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 text-center glow-pink">
+                Terms of Use
+            </h2>
+            <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
+                Please read and understand our terms before using any macros.
+            </p>
+            
+            <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-8">
+                <div class="prose prose-invert max-w-none">
+                    <h3 class="text-xl font-bold text-white mb-3">Disclaimer</h3>
+                    <p class="text-gray-300 mb-4">
+                        MacroStack provides automation tools ("macros") for educational and entertainment purposes only. 
+                        You are solely responsible for how you use these tools and must ensure compliance with all 
+                        applicable laws and terms of service for any software or service you automate.
+                    </p>
+                    
+                    <h3 class="text-xl font-bold text-white mb-3 mt-6">Usage Policy</h3>
+                    <p class="text-gray-300 mb-4">
+                        By downloading or using any macro from MacroStack, you agree to:
+                    </p>
+                    <ul class="text-gray-300 list-disc pl-5 mb-4 space-y-2">
+                        <li>Use macros only where permitted by the software/service provider</li>
+                        <li>Not use macros for cheating in competitive environments</li>
+                        <li>Not hold MacroStack responsible for any consequences of macro usage</li>
+                        <li>Accept that macros are provided "as is" without warranty</li>
+                    </ul>
+                    
+                    <h3 class="text-xl font-bold text-white mb-3 mt-6">License</h3>
+                    <p class="text-gray-300">
+                        All macros on MacroStack are released under the MIT License unless otherwise specified. 
+                        This means you're free to use, modify, and distribute them, but we provide no guarantees 
+                        of functionality or safety.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-8 px-4 bg-gray-900 border-t border-gray-800">
+        <div class="container mx-auto">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="mb-4 md:mb-0">
+                    <h2 class="font-tech text-xl font-bold text-white glow-purple">
+                        Macro<span class="glow-cyan">Stack</span>
+                    </h2>
+                    <p class="text-gray-400 text-sm mt-1">Free macros for everyone</p>
+                </div>
+                <div class="flex flex-wrap justify-center md:justify-end space-x-6">
+                    <a href="#about" class="text-gray-400 hover:text-white transition duration-300 text-sm">About</a>
+                    <a href="#downloads" class="text-gray-400 hover:text-white transition duration-300 text-sm">Download</a>
+                    <a href="#faq" class="text-gray-400 hover:text-white transition duration-300 text-sm">FAQ</a>
+                    <a href="#terms" class="text-gray-400 hover:text-white transition duration-300 text-sm">Terms</a>
+                </div>
+            </div>
+            <div class="mt-8 text-center text-gray-500 text-xs">
+                &copy; 2025 MacroStack. All macros are provided free of charge. Not affiliated with any game or software company.
+            </div>
+        </div>
+    </footer>
+
+    
+<script>
+/* ---------- UI Helpers (mobile menu, smooth scroll) ---------- */
+document.getElementById('mobile-menu-button').addEventListener('click', () => {
+    document.getElementById('mobile-menu').classList.toggle('hidden');
+});
+document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const targetId = this.getAttribute('href');
+        if (targetId === '#') return;
+        const el = document.querySelector(targetId);
+        if (el){
+            document.getElementById('mobile-menu').classList.add('hidden');
+            window.scrollTo({top: el.offsetTop - 80, behavior: 'smooth'});
+        }
+    });
+});
+
+/* ---------- Hero slideshow ---------- */
+let currentSlide = 0;
+const slides = document.querySelectorAll('.macro-slide');
+const dots = document.querySelectorAll('.slide-dot');
+function showSlide(i){
+    slides.forEach((s,idx)=>s.style.opacity = idx===i?'1':'0');
+    dots.forEach((d,idx)=>{
+        d.classList.toggle('bg-gray-600', idx!==i);
+        d.classList.toggle('bg-white', idx===i);
+    });
+    currentSlide = i;
+}
+dots.forEach(dot=>{
+    dot.addEventListener('click',()=>showSlide(parseInt(dot.dataset.index)));
+});
+setInterval(()=>{currentSlide=(currentSlide+1)%slides.length;showSlide(currentSlide);},5000);
+showSlide(0);
+
+/* ---------- Accordion ---------- */
+document.querySelectorAll('.accordion-toggle').forEach(tog=>{
+    tog.addEventListener('click',()=>{
+        const content = tog.nextElementSibling;
+        const icon = tog.querySelector('svg');
+        if(content.style.maxHeight){
+            content.style.maxHeight = null;
+            icon.classList.remove('rotate-180');
+        }else{
+            content.style.maxHeight = content.scrollHeight + 'px';
+            icon.classList.add('rotate-180');
+        }
+    });
+});
+
+/* ---------- Particles ---------- */
+function createParticles(){
+    const container = document.getElementById('particles');
+    const n = Math.floor(window.innerWidth / 10);
+    for(let i=0;i<n;i++){
+        const p = document.createElement('div');
+        p.classList.add('particle');
+        const size = Math.random()*2+1;
+        Object.assign(p.style,{
+            width:`${size}px`,height:`${size}px`,
+            left:`${Math.random()*100}%`,
+            top:`${Math.random()*100}%`,
+            opacity:Math.random()*0.5,
+            animation:`float ${Math.random()*10+10}s ease-in-out ${Math.random()*5}s infinite`
+        });
+        container.appendChild(p);
+    }
+}
+window.addEventListener('load', createParticles);
+
+/* ---------- Live stats via backend ---------- */
+const API = '';
+async function refreshStats(){
+    try{
+        const data = await fetch(API+'/stats').then(r=>r.json());
+        animateCounter('download-counter', data.total);
+        animateCounter('macro-counter', Object.keys(data.macros).length);
+        Object.entries(data.macros).forEach(([id,count])=>{
+            const el = document.getElementById('leaderboard-'+id);
+            if(el) animateCounter(el.id, count);
+        });
+    }catch(e){console.error(e);}
+}
+
+/* Counter animation */
+function animateCounter(id, finalValue){
+    const el = document.getElementById(id);
+    const start = parseInt((el.textContent||'0').replace(/,/g,''),10) || 0;
+    const duration = 1500;
+    const startTime = performance.now();
+    function step(ts){
+        const progress = Math.min((ts - startTime)/duration, 1);
+        const value = Math.floor(start + (finalValue-start)*progress);
+        el.textContent = value.toLocaleString();
+        if(progress<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+/* ---------- Download buttons ---------- */
+document.querySelectorAll('.download-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const macro = btn.dataset.macro;
+    const key   = 'macro-downloaded-' + macro;          // localStorage flag
+
+    /* placeholder cards just warn */
+    if (!['better-tiny-task', 'grow-garden'].includes(macro)) {
+      alert('This macro will be available soon!');
+      return;
+    }
+
+    /* already downloaded once in this browser? */
+    if (localStorage.getItem(key)) {
+      // direct GET — no counter bump
+      window.location.href = `${API}/macros/${macro}.zip`;
+      return;
+    }
+
+    /* first-time click → bump counter, then save the ZIP */
+    const label = btn.textContent;
+    btn.disabled  = true;
+    btn.textContent = 'Downloading…';
+
+    /* 1 – POST and get the ZIP as a blob */
+    const blob = await fetch(`${API}/download/${macro}`, { method: 'POST' })
+                       .then(r => r.blob());
+
+    /* 2 – trigger browser download */
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href = url;
+    a.download = `${macro}.zip`;
+    document.body.appendChild(a);   // Firefox needs it in the DOM
+    a.click();
+    URL.revokeObjectURL(url);
+
+    /* 3 – remember we counted this browser once & refresh stats */
+    localStorage.setItem(key, '1');
+    await refreshStats();
+
+    btn.disabled  = false;
+    btn.textContent = label;
+  });
+});
+
+/* ---------- Trigger counter refresh on scroll (once) ---------- */
+let countersLoaded = false;
+window.addEventListener('scroll', ()=>{
+    const downloadsSec = document.getElementById('downloads');
+    if(!countersLoaded && window.scrollY + window.innerHeight > downloadsSec.offsetTop){
+        countersLoaded = true;
+        refreshStats();
+    }
+});
+</script>
+</body>
+
+</html>
