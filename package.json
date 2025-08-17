@@ -3,10 +3,9 @@
   "version": "1.1.0",
   "type": "module",
   "scripts": {
-    "start":  "node server.js & node site.js & node bot.js & wait",
+    "start":  "node server.js & node bot.js & wait",
     "server": "node server.js",
-    "bot":    "node bot.js",
-    "site":   "node site.js"
+    "bot":    "node bot.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
