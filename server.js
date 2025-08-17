@@ -10,7 +10,7 @@ import fs        from 'fs';
 const PORT       = process.env.PORT || 8000;           // Koyeb forwards 8000
 const MACROS_DIR = process.env.MACROS_DIR              // /persistent/macros
                  || path.resolve('macros');
-const PUBLIC_DIR = path.resolve('public');             // index.html folder
+const PUBLIC_DIR = path.resolve('.');             // index.html folder
 const MACROS     = ['better-tiny-task', 'grow-garden'];
 
 /* ---------- 1. SQLite ---------- */
