@@ -736,10 +736,6 @@ const userInfo   = document.getElementById('userInfo');
 const userAvatar = document.getElementById('userAvatar');
 const userName   = document.getElementById('userName');
 
-
-const LOGIN_URL = '/auth/discord';
-loginBtn.onclick  = () => (location.href = LOGIN_URL);
-  const LOGOUT_URL = '/logout';
 /* ---------- UI Helpers (mobile menu, smooth scroll) ---------- */
 document.getElementById('mobile-menu-button').addEventListener('click', () => {
     document.getElementById('mobile-menu').classList.toggle('hidden');
@@ -913,6 +909,45 @@ refreshStats();
     </div>
   </div>
 </div>
+<script>
+// Use your actual Discord authorize link
+const LOGIN_URL  = "https://discord.com/oauth2/authorize?client_id=1406800818786668644&response_type=code&redirect_uri=https%3A%2F%2Fmacrostack.koyeb.app%2Fauth%2Fdiscord%2Fcallback&scope=identify";
+const LOGOUT_URL = "/logout";
+
+document.addEventListener("DOMContentLoaded", () => {
+    const loginBtn      = document.getElementById("loginBtn");
+    const logoutBtn     = document.getElementById("logoutBtn");
+    const loginModal    = document.getElementById("loginModal");
+    const modalLoginBtn = document.getElementById("modalLoginBtn");
+    const modalCloseBtn = document.getElementById("modalCloseBtn");
+
+    function showLoginModal() {
+        loginModal?.classList.remove("hidden");
+    }
+
+    function hideLoginModal() {
+        loginModal?.classList.add("hidden");
+    }
+
+    loginBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        location.href = LOGIN_URL;
+    });
+
+    logoutBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        location.href = LOGOUT_URL;
+    });
+
+    modalLoginBtn?.addEventListener("click", () => {
+        hideLoginModal();
+        location.href = LOGIN_URL;
+    });
+
+    modalCloseBtn?.addEventListener("click", hideLoginModal);
+});
+</script>
+
 <script>/* ---- Download guard v2 ---- */
 function userLoggedIn(){
   return loginBtn && loginBtn.classList.contains('hidden');
