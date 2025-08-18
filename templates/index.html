@@ -730,6 +730,12 @@
 
     
 <script>
+const loginBtn   = document.getElementById('loginBtn');
+const logoutBtn  = document.getElementById('logoutBtn');
+const userInfo   = document.getElementById('userInfo');
+const userAvatar = document.getElementById('userAvatar');
+const userName   = document.getElementById('userName');
+
 
 const LOGIN_URL = '/auth/discord';             // let Passport start the flow (sets session + state)
 loginBtn.onclick  = () => (location.href = LOGIN_URL);
@@ -805,11 +811,6 @@ function createParticles(){
 window.addEventListener('load', createParticles);
 
 
-const loginBtn  = document.getElementById('loginBtn');
-const logoutBtn = document.getElementById('logoutBtn');
-const userInfo  = document.getElementById('userInfo');
-const userAvatar= document.getElementById('userAvatar');
-const userName  = document.getElementById('userName');
 loginBtn.onclick  = () => location.href = LOGIN_URL;
 logoutBtn.onclick = () => location.href = LOGOUT_URL;
 
