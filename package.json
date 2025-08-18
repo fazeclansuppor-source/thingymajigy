@@ -21,6 +21,8 @@
     "passport-discord": "^0.1.4",
     "uuid":             "^9.0.1",
     "querystring":      "^0.2.1"
+  ,
+  "csurf":            "^1.11.0"
   },
 
   "devDependencies": {
