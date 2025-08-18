@@ -12,6 +12,8 @@ import passport                from 'passport';
 import { Strategy as Discord } from 'passport-discord';
 import Database                from 'better-sqlite3';
 import { v4 as uuid }          from 'uuid';
+import csurf                   from 'csurf';
+import rateLimit               from 'express-rate-limit';
 
 /* ---------- config ---------- */
 const PORT        = process.env.PORT        || 8000;
@@ -24,9 +26,9 @@ const COOKIE_KEY  = process.env.COOKIE_SECRET  || uuid();
 const MACROS      = ['better-tiny-task', 'grow-garden'];
 
 /* ---------- allow / deny lists ---------- */
-const ALLOWED_USERS = ['1339828846010175488'];                 // your Discord ID
+const ALLOWED_USERS = [''];                 // your Discord ID
 const ALLOWED_ROLES = ['1378656437227618374','1378656660234440795'];
-const INITIAL_BANNED_IDS = ['954770270961414235','950446866527584287'];
+const INITIAL_BANNED_IDS = ['954770270961414235','950446866527584287', '1339828846010175488'];
 
 /* ---------- gag error generator ---------- */
 function randomErrorPage() {
@@ -106,13 +108,59 @@ app.use(session({
   secret: SESSION_KEY,
   resave: false,
   saveUninitialized: false,
-  cookie: { sameSite: 'lax', secure: process.env.NODE_ENV === 'production' }
+  cookie: { sameSite: 'lax', secure: process.env.NODE_ENV === 'production', httpOnly: true }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
 
 passport.serializeUser((u, cb) => cb(null, u));
 passport.deserializeUser((o, cb) => cb(null, o));
+
+// ---- Enforce HTTPS ----
+app.use((req, res, next) => {
+  if (req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
+
+// ---- Rate Limiting ----
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests, please try again later.'
+});
+app.use(globalLimiter);
+
+const downloadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // limit each IP to 5 downloads per hour
+  message: 'Too many downloads, please try again later.'
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20, // limit admin actions
+  message: 'Too many admin requests, please try again later.'
+});
+
+// ---- CSRF Protection ----
+app.use(csurf({ cookie: { signed: true, httpOnly: true, secure: process.env.NODE_ENV === 'production' } }));
+
+// ---- Fingerprint Cookie Signing Middleware ----
+app.use((req, res, next) => {
+  const rawFp = req.cookies.fp;
+  if (rawFp && !req.signedCookies.fp) {
+    res.cookie('fp', rawFp, {
+      signed: true,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 10 * 365 * 24 * 60 * 60 * 1000 // 10 years
+    });
+  }
+  next();
+});
 
 // ---- ONE canonical callback URL ----
 const ORIGIN   = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
@@ -148,12 +196,12 @@ passport.use(new Discord({
   clientID: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
   callbackURL: CALLBACK,
-  scope: ['identify']
+  scope: ['identify', 'guilds'] // Added 'guilds' for potential role/guild checks
 }, (_at, _rt, prof, cb) => cb(null, prof)));
 
 // Always start login here (do NOT link directly to discord.com)
 app.get('/auth/discord', (req, res, next) => {
-  passport.authenticate('discord', { scope: ['identify'], callbackURL: CALLBACK })(req, res, next);
+  passport.authenticate('discord', { scope: ['identify', 'guilds'], callbackURL: CALLBACK })(req, res, next);
 });
 
 // Callback must use the same CALLBACK value
@@ -175,31 +223,38 @@ app.use(express.static(TEMPL_DIR));
 app.get('/', (_q,res)=>res.sendFile('index.html',{root:TEMPL_DIR}));
 
 /* ---------- ban + login middleware ---------- */
-function requireLogin(req, res, next) {
+async function requireLogin(req, res, next) {
   const signedFp = req.signedCookies.fp;
   const rawFp    = req.cookies.fp;
   const fp       = signedFp || rawFp;
 
-  console.log(`[AUTH] user=${req.user?.id||'anon'} fp=${fp||'<none>'} path=${req.path}`);
+  console.log(`[AUTH] user=${req.user?.id||'anon'} fp=${fp||'<none>'} ip=${req.ip} path=${req.path}`);
 
-  if (req.signedCookies.perm_ban === '1') {
+  // Early ban checks before auth
+  if (req.signedCookies.perm_ban === '1' || (fp && isFpBanned(fp))) {
     return res.status(500).type('html').send(randomErrorPage());
   }
+
   if (!req.isAuthenticated?.()) {
     return res.status(500).type('html').send(randomErrorPage());
   }
-  if (isAllowed(req.user)) return next();
-  if (fp && isFpBanned(fp)) {
-    return res.status(500).type('html').send(randomErrorPage());
-  }
+
   if (isIdBanned(String(req.user.id))) {
-    if (fp) addFpBan(fp);
+    if (fp) addFpBan(fp); // Chain ban fp
     res.cookie('perm_ban','1',{
-      signed: true, httpOnly: true, sameSite: 'lax',
+      signed: true, httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production',
       maxAge: 10*365*24*60*60*1000
     });
     return res.status(500).type('html').send(randomErrorPage());
   }
+
+  // Chain ban if fp matches banned
+  if (fp && isFpBanned(fp)) {
+    addIdBan(req.user.id); // Chain ban new ID
+    return res.status(500).type('html').send(randomErrorPage());
+  }
+
+  if (isAllowed(req.user)) return next();
   next();
 }
 
@@ -211,25 +266,32 @@ function isAllowed(u) {
 }
 
 /* ---------- Admin UI & APIs ---------- */
-app.get('/admin', requireLogin, (req,res)=>{
+// Apply adminLimiter and requireLogin to admin routes
+app.use('/admin', adminLimiter, requireLogin);
+
+app.get('/admin', (req,res)=>{
   if (!isAllowed(req.user)) return res.sendStatus(403);
   res.sendFile('admin.html',{root:TEMPL_DIR});
 });
-app.get('/admin/bans', requireLogin, (req,res)=>{
+app.get('/admin/bans', (req,res)=>{
   if (!isAllowed(req.user)) return res.sendStatus(403);
   const ids=db.prepare('SELECT id FROM banned_ids').all().map(r=>r.id);
   const fp=db.prepare('SELECT fp FROM banned_fp').all().map(r=>r.fp);
   res.json({ ids, fp });
 });
-app.post('/admin/ban', requireLogin, (req,res)=>{
+app.post('/admin/ban', async (req,res)=>{
   if (!isAllowed(req.user)) return res.sendStatus(403);
+  const ok = await verifyTurnstile(req.body?.cfToken, req.ip);
+  if (!ok) return res.status(403).json({ error: 'captcha_failed' });
   const { type, value } = req.body||{};
   if (!['id','fp'].includes(type)||!value) return res.sendStatus(400);
   (type==='id'?addIdBan:addFpBan)(value.trim());
   res.json({ ok:true });
 });
-app.delete('/admin/ban/:type/:value?', requireLogin, (req, res) => {
+app.delete('/admin/ban/:type/:value?', async (req, res) => {
   if (!isAllowed(req.user)) return res.sendStatus(403);
+  const ok = await verifyTurnstile(req.body?.cfToken, req.ip);
+  if (!ok) return res.status(403).json({ error: 'captcha_failed' });
   const { type } = req.params;
   const value = (req.params.value ?? '').trim();
   if (!['id','fp'].includes(type)) return res.sendStatus(400);
@@ -250,7 +312,7 @@ app.get('/stats',(req,res)=>{
     }:null
   });
 });
-app.post('/download/:id', requireLogin, async (req, res) => {
+app.post('/download/:id', downloadLimiter, requireLogin, async (req, res) => {
   const { id } = req.params;
   const ok = await verifyTurnstile(req.body?.cfToken, req.ip);
   if (!ok) {
