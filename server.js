@@ -102,7 +102,17 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser(COOKIE_KEY));
 
-app.use(session({ secret:SESSION_KEY, resave:false, saveUninitialized:false }));
+// Trust proxy for secure cookies (Koyeb/HTTPS)
+app.set('trust proxy', 1);
+app.use(session({
+  secret: SESSION_KEY,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production'
+  }
+}));
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -137,16 +147,35 @@ async function verifyTurnstile(token, remoteip) {
   }
 }
 
-app.get('/login', (_req, res) => {
-  res.redirect('https://discord.com/oauth2/authorize?client_id=1406800818786668644&response_type=code&redirect_uri=https%3A%2F%2Fmacrostack.koyeb.app%2Fauth%2Fdiscord%2Fcallback&scope=identify');
+/* ---------- Auth routes ---------- */
+app.get('/auth/discord', (req, res, next) => {
+  const cb = `${BASE_URL}/auth/discord/callback`;
+  console.log('➡️  /auth/discord redirect_uri:', cb, 'client_id:', process.env.CLIENT_ID);
+  passport.authenticate('discord', { scope: ['identify'], callbackURL: cb })(req, res, next);
 });
 
-/* ---------- Auth routes ---------- */
-app.get('/auth/discord', passport.authenticate('discord'));
-app.get('/auth/discord/callback',
-  passport.authenticate('discord',{ failureRedirect:'/login-failed' }),
-  (_q,res) => res.redirect('/')
-);
+app.get('/auth/discord/callback', (req, res, next) => {
+  const cb = `${BASE_URL}/auth/discord/callback`;
+  passport.authenticate('discord', { callbackURL: cb }, (err, user, info) => {
+    if (err) {
+      console.error('❌ Discord auth error:', err, info);
+      return res.status(500).send(`<pre>${err?.stack || err?.message || err}</pre>`);
+    }
+    if (!user) {
+      console.error('❌ Discord login failed:', info);
+      return res.status(401).send(`<pre>Discord login failed.\n${JSON.stringify(info, null, 2)}</pre>`);
+    }
+    req.logIn(user, (err) => {
+      if (err) {
+        console.error('❌ req.logIn error:', err);
+        return res.status(500).send(`<pre>${err?.stack || err}</pre>`);
+      }
+      console.log('✅ Discord login success:', { id: user.id, username: user.username });
+      return res.redirect('/');
+    });
+  })(req, res, next);
+});
+
 app.get('/logout',(req,res)=>{ req.logout(()=>{}); res.redirect('/'); });
 
 /* ---------- Static front-end ---------- */
@@ -155,29 +184,22 @@ app.get('/', (_q,res)=>res.sendFile('index.html',{root:TEMPL_DIR}));
 
 /* ---------- ban + login middleware ---------- */
 function requireLogin(req, res, next) {
-  // 1) read both signed and unsigned
   const signedFp = req.signedCookies.fp;
   const rawFp    = req.cookies.fp;
   const fp       = signedFp || rawFp;
 
-  // DEBUGGING: log every time someone hits /macros or /download
   console.log(`[AUTH] user=${req.user?.id||'anon'} fp=${fp||'<none>'} path=${req.path}`);
 
-  // 2) perm-ban cookie
   if (req.signedCookies.perm_ban === '1') {
     return res.status(500).type('html').send(randomErrorPage());
   }
-  // 3) login required
   if (!req.isAuthenticated?.()) {
     return res.status(500).type('html').send(randomErrorPage());
   }
-  // 4) admin bypass
   if (isAllowed(req.user)) return next();
-  // 5) fingerprint ban
   if (fp && isFpBanned(fp)) {
     return res.status(500).type('html').send(randomErrorPage());
   }
-  // 6) ID ban
   if (isIdBanned(String(req.user.id))) {
     if (fp) addFpBan(fp);
     res.cookie('perm_ban','1',{
@@ -186,12 +208,8 @@ function requireLogin(req, res, next) {
     });
     return res.status(500).type('html').send(randomErrorPage());
   }
-
   next();
 }
-
-/* ---------- protected ZIP host ---------- */
-//app.use('/macros', requireLogin, express.static(MACROS_DIR));
 
 /* ---------- admin gate ---------- */
 function isAllowed(u) {
@@ -242,18 +260,12 @@ app.get('/stats',(req,res)=>{
 });
 app.post('/download/:id', requireLogin, async (req, res) => {
   const { id } = req.params;
-
-  // 0) verify Turnstile
   const ok = await verifyTurnstile(req.body?.cfToken, req.ip);
   if (!ok) {
     console.warn('[DL] captcha_failed', { id, ip: req.ip });
     return res.status(403).json({ error: 'captcha_failed' });
   }
-
-  // 1) mark recent challenge for GET fallback (if you keep it)
   req.session.cfok = Date.now();
-
-  // 2) build path and sanity-check file
   const filePath = path.join(MACROS_DIR, `${id}.zip`);
   if (!MACROS.includes(id)) {
     console.warn('[DL] unknown id', { id });
@@ -263,15 +275,12 @@ app.post('/download/:id', requireLogin, async (req, res) => {
     console.error('[DL] missing file', { filePath });
     return res.status(404).json({ error: 'missing_file', filePath });
   }
-
-  // 3) update stats and send file; capture errors from res.download
   try {
     db.prepare('UPDATE stats SET downloads=downloads+1 WHERE id=?').run(id);
   } catch (e) {
     console.error('[DL] stats update failed', e);
     return res.status(500).json({ error: 'stats_update_failed' });
   }
-
   console.log('[DL] sending', { id, filePath });
   res.download(filePath, err => {
     if (err) {

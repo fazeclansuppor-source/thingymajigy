@@ -737,7 +737,7 @@ const userAvatar = document.getElementById('userAvatar');
 const userName   = document.getElementById('userName');
 
 
-const LOGIN_URL = '/login';
+const LOGIN_URL = '/auth/discord';
 loginBtn.onclick  = () => (location.href = LOGIN_URL);
   const LOGOUT_URL = '/logout';
 /* ---------- UI Helpers (mobile menu, smooth scroll) ---------- */
@@ -927,9 +927,9 @@ const loginModal = document.getElementById('loginModal');
 const modalLoginBtn = document.getElementById('modalLoginBtn');
 const modalCloseBtn = document.getElementById('modalCloseBtn');
 modalCloseBtn?.addEventListener('click', hideLoginModal);
-modalLoginBtn?.addEventListener('click', ()=>{
+modalLoginBtn?.addEventListener('click', () => {
   hideLoginModal();
-  loginBtn?.click();
+  location.href = LOGIN_URL;
 });
 
 /* Intercept only if user not logged in */
