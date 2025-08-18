@@ -97,80 +97,49 @@ const isIdBanned = id => db.prepare('SELECT 1 FROM banned_ids WHERE id=?').get(i
 const isFpBanned = fp => db.prepare('SELECT 1 FROM banned_fp WHERE fp=?').get(fp);
 
 /* ---------- Express & passport ---------- */
+/* ---------- Express & passport ---------- */
 const app = express();
+app.set('trust proxy', 1); // behind Koyeb
 app.use(cors());
 app.use(express.json());
 app.use(cookieParser(COOKIE_KEY));
-
-// Trust proxy for secure cookies (Koyeb/HTTPS)
-app.set('trust proxy', 1);
 app.use(session({
   secret: SESSION_KEY,
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production'
-  }
+  cookie: { sameSite: 'lax', secure: process.env.NODE_ENV === 'production' }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
 
-passport.serializeUser((u,cb)=>cb(null,u));
-passport.deserializeUser((o,cb)=>cb(null,o));
+passport.serializeUser((u, cb) => cb(null, u));
+passport.deserializeUser((o, cb) => cb(null, o));
+
+// ---- ONE canonical callback URL ----
+const ORIGIN   = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+const CALLBACK = `${ORIGIN}/auth/discord/callback`;
+console.log('OAuth ORIGIN =', ORIGIN);
+console.log('OAuth CALLBACK =', CALLBACK);
 
 passport.use(new Discord({
-  clientID:process.env.CLIENT_ID,
-  clientSecret:process.env.CLIENT_SECRET,
-  callbackURL:`${BASE_URL}/auth/discord/callback`,
-  scope:['identify']
-}, (_at,_rt,prof,cb)=>cb(null,prof)));
+  clientID: process.env.CLIENT_ID,
+  clientSecret: process.env.CLIENT_SECRET,
+  callbackURL: CALLBACK,
+  scope: ['identify']
+}, (_at, _rt, prof, cb) => cb(null, prof)));
 
-async function verifyTurnstile(token, remoteip) {
-  try {
-    if (!TURNSTILE_SECRET || !token) return false;
-    const params = new URLSearchParams();
-    params.append('secret', TURNSTILE_SECRET);
-    params.append('response', token);
-    if (remoteip) params.append('remoteip', remoteip);
-
-    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString()
-    });
-    const data = await r.json();
-    return !!data.success;
-  } catch (e) {
-    console.error('Turnstile verify error:', e);
-    return false;
-  }
-}
-
-/* ---------- Auth routes ---------- */
+// Always start login here (do NOT link directly to discord.com)
 app.get('/auth/discord', (req, res, next) => {
-  const cb = `${BASE_URL}/auth/discord/callback`;
-  console.log('➡️  /auth/discord redirect_uri:', cb, 'client_id:', process.env.CLIENT_ID);
-  passport.authenticate('discord', { scope: ['identify'], callbackURL: cb })(req, res, next);
+  passport.authenticate('discord', { scope: ['identify'], callbackURL: CALLBACK })(req, res, next);
 });
 
+// Callback must use the same CALLBACK value
 app.get('/auth/discord/callback', (req, res, next) => {
-  const cb = `${BASE_URL}/auth/discord/callback`;
-  passport.authenticate('discord', { callbackURL: cb }, (err, user, info) => {
-    if (err) {
-      console.error('❌ Discord auth error:', err, info);
-      return res.status(500).send(`<pre>${err?.stack || err?.message || err}</pre>`);
-    }
-    if (!user) {
-      console.error('❌ Discord login failed:', info);
-      return res.status(401).send(`<pre>Discord login failed.\n${JSON.stringify(info, null, 2)}</pre>`);
-    }
-    req.logIn(user, (err) => {
-      if (err) {
-        console.error('❌ req.logIn error:', err);
-        return res.status(500).send(`<pre>${err?.stack || err}</pre>`);
-      }
-      console.log('✅ Discord login success:', { id: user.id, username: user.username });
+  passport.authenticate('discord', { callbackURL: CALLBACK }, (err, user, info) => {
+    if (err) { console.error('❌ Discord auth error:', err, info); return res.status(500).send('Auth error'); }
+    if (!user) { console.error('❌ Discord login failed:', info); return res.status(401).send('Login failed'); }
+    req.logIn(user, (e) => {
+      if (e) { console.error('❌ req.logIn error:', e); return res.status(500).send('Session error'); }
       return res.redirect('/');
     });
   })(req, res, next);
