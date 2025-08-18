@@ -737,7 +737,7 @@ const userAvatar = document.getElementById('userAvatar');
 const userName   = document.getElementById('userName');
 
 
-const LOGIN_URL = '/auth/discord';             // let Passport start the flow (sets session + state)
+const LOGIN_URL = '/login';
 loginBtn.onclick  = () => (location.href = LOGIN_URL);
   const LOGOUT_URL = '/logout';
 /* ---------- UI Helpers (mobile menu, smooth scroll) ---------- */
@@ -929,7 +929,7 @@ const modalCloseBtn = document.getElementById('modalCloseBtn');
 modalCloseBtn?.addEventListener('click', hideLoginModal);
 modalLoginBtn?.addEventListener('click', ()=>{
   hideLoginModal();
-  location.href = '/auth/discord';
+  loginBtn?.click();
 });
 
 /* Intercept only if user not logged in */

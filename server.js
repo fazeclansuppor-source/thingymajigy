@@ -137,6 +137,10 @@ async function verifyTurnstile(token, remoteip) {
   }
 }
 
+app.get('/login', (_req, res) => {
+  res.redirect('https://discord.com/oauth2/authorize?client_id=1406800818786668644&response_type=code&redirect_uri=https%3A%2F%2Fmacrostack.koyeb.app%2Fauth%2Fdiscord%2Fcallback&scope=identify');
+});
+
 /* ---------- Auth routes ---------- */
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback',
