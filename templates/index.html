@@ -929,7 +929,7 @@ const modalCloseBtn = document.getElementById('modalCloseBtn');
 modalCloseBtn?.addEventListener('click', hideLoginModal);
 modalLoginBtn?.addEventListener('click', ()=>{
   hideLoginModal();
-  loginBtn?.click();
+  location.href = '/auth/discord';
 });
 
 /* Intercept only if user not logged in */
