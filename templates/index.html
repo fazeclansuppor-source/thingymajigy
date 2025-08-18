@@ -3,11 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MacroStack – Free Macros for Everyone</title>
+    <title>Macro Stack – Free Macros for Everyone</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/ScrollTrigger.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@3/dist/fp.min.js"></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <script>
+    (async ()=>{
+        // if we don’t already have an fp cookie...
+        if (!document.cookie.split(';').some(c => c.trim().startsWith('fp='))) {
+        const fpjs   = await FingerprintJS.load();
+        const result = await fpjs.get();
+        // set it *without* signing, so req.cookies.fp will pick it up
+        document.cookie = 
+            `fp=${result.visitorId}; Path=/; Max-Age=${60*60*24*365*5}; SameSite=Lax`;
+        // reload so that all subsequent requests carry fp
+        return window.location.reload();
+        }
+    })();
+    </script>
     <style>
         :root {
             --neon-purple: #c724f8;
@@ -122,7 +138,7 @@
         <div class="container mx-auto px-4 py-3 flex justify-between items-center">
             <div class="flex items-center">
                 <h1 class="font-tech text-2xl md:text-3xl font-bold text-white glow-purple">
-                    Macro<span class="glow-cyan">Stack</span>
+                    Macro<span class="glow-cyan"> Stack</span>
                 </h1>
             </div>
             <nav class="hidden md:flex space-x-6">
@@ -134,6 +150,16 @@
                 <a href="#community" class="text-white hover:text-yellow-300 transition duration-300 font-medium">Community</a>
                 <a href="#terms" class="text-white hover:text-red-300 transition duration-300 font-medium">Terms</a>
             </nav>
+                <div class="flex items-center space-x-2">
+    <!-- User info shown when logged in -->
+    <div id="userInfo" class="hidden flex items-center space-x-2">
+        <img id="userAvatar" class="w-8 h-8 rounded-full border-2 border-green-500" src="" alt="Avatar">
+        <span id="userName" class="text-white font-medium"></span>
+    </div>
+    <!-- Auth buttons -->
+    <button id="loginBtn" class="px-4 py-1 bg-indigo-500 text-white rounded-full">Sign in</button>
+    <button id="logoutBtn" class="px-4 py-1 bg-red-500 text-white rounded-full hidden">Log out</button>
+</div>
             <button id="mobile-menu-button" class="md:hidden text-white focus:outline-none">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
@@ -159,7 +185,7 @@
         <div class="container mx-auto flex flex-col md:flex-row items-center">
             <div class="md:w-1/2 mb-10 md:mb-0">
                 <h1 class="font-tech text-4xl md:text-6xl font-bold text-white mb-4 glow-purple">
-                    Macro<span class="glow-cyan">Stack</span>
+                    Macro<span class="glow-cyan"> Stack</span>
                 </h1>
                 <h2 class="text-xl md:text-2xl text-gray-300 mb-8">
                     Creative, powerful, and free macros for games and apps.
@@ -232,10 +258,6 @@
                         <div class="font-tech text-5xl md:text-6xl font-bold text-white mb-2 counter glow-cyan" id="macro-counter">0</div>
                         <div class="text-gray-400 uppercase text-sm tracking-wider">Available Macros</div>
                     </div>
-                    <div class="text-center">
-                        <div class="font-tech text-5xl md:text-6xl font-bold text-white mb-2 counter glow-pink" id="user-counter">0</div>
-                        <div class="text-gray-400 uppercase text-sm tracking-wider">Active Users</div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -262,9 +284,12 @@
         <div class="p-4">
             <img src="https://via.placeholder.com/400x250/1a1a2e/00f0ff?text=Better+Tiny+Task" alt="Macro Preview" class="w-full h-40 object-cover rounded-lg mb-4">
             <p class="text-gray-400 text-sm mb-4">Enhanced version of TinyTask with more features and customization options.</p>
-            <button class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="better-tiny-task">
+            <form action="/download/better-tiny-task" method="POST">
+            <button type="submit"
+                    class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300">
                 Download (v2.1.4)
             </button>
+            </form>
         </div>
     </div>
 
@@ -277,9 +302,12 @@
         <div class="p-4">
             <img src="https://via.placeholder.com/400x250/1a1a2e/ff2d75?text=Grow+a+Garden" alt="Macro Preview" class="w-full h-40 object-cover rounded-lg mb-4">
             <p class="text-gray-400 text-sm mb-4">Automate your gardening tasks in popular farming simulation games.</p>
-            <button class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300 download-btn" data-macro="grow-garden">
+            <form action="/download/grow-garden" method="POST">
+            <button type="submit"
+                    class="w-full px-4 py-2 bg-green-500 text-white font-bold rounded-full btn-glow-green hover:bg-green-600 transition duration-300">
                 Download (v1.3.2)
             </button>
+            </form>
         </div>
     </div>
 
@@ -495,7 +523,7 @@
                 Frequently Asked Questions
             </h2>
             <p class="text-gray-400 mb-12 text-center max-w-2xl mx-auto">
-                Get answers to common questions about MacroStack.
+                Get answers to common questions about Macro Stack.
             </p>
             
             <div class="space-y-4">
@@ -511,7 +539,7 @@
                     </button>
                     <div class="accordion-content px-6">
                         <div class="pb-4 text-gray-300">
-                            Yes! All macros on MacroStack are completely free with no hidden costs, premium tiers, or paywalls. We believe in open access to useful tools for everyone.
+                            Yes! All macros on Macro Stack are completely free with no hidden costs, premium tiers, or paywalls. We believe in open access to useful tools for everyone.
                         </div>
                     </div>
                 </div>
@@ -520,7 +548,7 @@
                 <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 overflow-hidden">
                     <button class="accordion-toggle w-full px-6 py-4 text-left focus:outline-none">
                         <div class="flex justify-between items-center">
-                            <h3 class="font-bold text-white">Is MacroStack safe to use?</h3>
+                            <h3 class="font-bold text-white">Is Macro Stack safe to use?</h3>
                             <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
@@ -591,16 +619,16 @@
     <section id="about" class="py-16 px-4 bg-gray-900">
         <div class="container mx-auto max-w-4xl text-center">
             <h2 class="font-tech text-3xl md:text-4xl font-bold text-white mb-2 glow-purple">
-                About MacroStack
+                About Macro Stack
             </h2>
             <div class="bg-gray-800 bg-opacity-50 rounded-xl border border-gray-700 p-8 mt-8">
                 <p class="text-gray-300 text-lg leading-relaxed">
-                    MacroStack is a creative hub for free macros, built for fun and powered by community sharing. 
+                    Macro Stack is a creative hub for free macros, built for fun and powered by community sharing. 
                     Our mission is to provide high-quality automation tools without the premium paywalls or fake statistics 
                     that plague other macro sites. Everything here is genuinely free, created by enthusiasts for enthusiasts.
                 </p>
                 <p class="text-gray-300 text-lg leading-relaxed mt-4">
-                    Founded in 2021 by a group of automation enthusiasts, MacroStack has grown into a thriving community 
+                    Founded in 2021 by a group of automation enthusiasts, Macro Stack has grown into a thriving community 
                     of developers and users who believe in open access to useful tools. Whether you're a gamer looking 
                     to automate repetitive tasks or a power user wanting to streamline your workflow, you'll find 
                     something useful here.
@@ -625,7 +653,7 @@
                         <path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.128 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418z"></path>
                     </svg>
                 </div>
-                <h3 class="text-xl font-bold text-white mb-4">MacroStack Discord</h3>
+                <h3 class="text-xl font-bold text-white mb-4">Macro Stack Discord</h3>
                 <p class="text-gray-300 mb-6">
                     Join our growing community of macro enthusiasts, developers, and power users. Get help, share ideas, and stay updated on new releases.
                 </p>
@@ -650,25 +678,25 @@
                 <div class="prose prose-invert max-w-none">
                     <h3 class="text-xl font-bold text-white mb-3">Disclaimer</h3>
                     <p class="text-gray-300 mb-4">
-                        MacroStack provides automation tools ("macros") for educational and entertainment purposes only. 
+                        Macro Stack provides automation tools ("macros") for educational and entertainment purposes only. 
                         You are solely responsible for how you use these tools and must ensure compliance with all 
                         applicable laws and terms of service for any software or service you automate.
                     </p>
                     
                     <h3 class="text-xl font-bold text-white mb-3 mt-6">Usage Policy</h3>
                     <p class="text-gray-300 mb-4">
-                        By downloading or using any macro from MacroStack, you agree to:
+                        By downloading or using any macro from Macro Stack, you agree to:
                     </p>
                     <ul class="text-gray-300 list-disc pl-5 mb-4 space-y-2">
                         <li>Use macros only where permitted by the software/service provider</li>
                         <li>Not use macros for cheating in competitive environments</li>
-                        <li>Not hold MacroStack responsible for any consequences of macro usage</li>
+                        <li>Not hold Macro Stack responsible for any consequences of macro usage</li>
                         <li>Accept that macros are provided "as is" without warranty</li>
                     </ul>
                     
                     <h3 class="text-xl font-bold text-white mb-3 mt-6">License</h3>
                     <p class="text-gray-300">
-                        All macros on MacroStack are released under the MIT License unless otherwise specified. 
+                        All macros on Macro Stack are released under the MIT License unless otherwise specified. 
                         This means you're free to use, modify, and distribute them, but we provide no guarantees 
                         of functionality or safety.
                     </p>
@@ -683,7 +711,7 @@
             <div class="flex flex-col md:flex-row justify-between items-center">
                 <div class="mb-4 md:mb-0">
                     <h2 class="font-tech text-xl font-bold text-white glow-purple">
-                        Macro<span class="glow-cyan">Stack</span>
+                        Macro<span class="glow-cyan"> Stack</span>
                     </h2>
                     <p class="text-gray-400 text-sm mt-1">Free macros for everyone</p>
                 </div>
@@ -695,13 +723,17 @@
                 </div>
             </div>
             <div class="mt-8 text-center text-gray-500 text-xs">
-                &copy; 2025 MacroStack. All macros are provided free of charge. Not affiliated with any game or software company.
+                &copy; 2025 Macro Stack. All macros are provided free of charge. Not affiliated with any game or software company.
             </div>
         </div>
     </footer>
 
     
 <script>
+
+const LOGIN_URL =
+  'https://discord.com/oauth2/authorize?client_id=1406800818786668644&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fauth%2Fdiscord%2Fcallback&scope=identify';
+  const LOGOUT_URL = '/logout';
 /* ---------- UI Helpers (mobile menu, smooth scroll) ---------- */
 document.getElementById('mobile-menu-button').addEventListener('click', () => {
     document.getElementById('mobile-menu').classList.toggle('hidden');
@@ -772,13 +804,50 @@ function createParticles(){
 }
 window.addEventListener('load', createParticles);
 
+
+const loginBtn  = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const userInfo  = document.getElementById('userInfo');
+const userAvatar= document.getElementById('userAvatar');
+const userName  = document.getElementById('userName');
+loginBtn.onclick  = () => location.href = LOGIN_URL;
+logoutBtn.onclick = () => location.href = LOGOUT_URL;
+
 /* ---------- Live stats via backend ---------- */
-const API = '';
+const API = window.location.origin;
 async function refreshStats(){
     try{
-        const data = await fetch(API+'/stats').then(r=>r.json());
+        const data = await fetch(API+'/stats', { 
+            credentials: 'include' 
+        }).then(r=>r.json());
         animateCounter('download-counter', data.total);
         animateCounter('macro-counter', Object.keys(data.macros).length);
+        if (data.user){
+    // Hide login, show logout & user info
+    loginBtn.classList.add('hidden');
+    logoutBtn.classList.remove('hidden');
+    userInfo.classList.remove('hidden');
+    // username & avatar
+    userName.textContent = data.user.username || data.user.name || 'User';
+    
+let avatar = data.user.avatarUrl || data.user.avatar;
+if (avatar){
+  if (!avatar.startsWith('http')){
+    avatar = `https://cdn.discordapp.com/avatars/${data.user.id}/${avatar}.png?size=64`;
+  }
+  userAvatar.src = avatar;
+}else{
+  // fallback default Discord identicons
+  const n = parseInt(data.user.discriminator ?? '0') % 5;
+  userAvatar.src = `https://cdn.discordapp.com/embed/avatars/${n}.png`;
+}
+
+}else{
+    loginBtn.classList.remove('hidden');
+    logoutBtn.classList.add('hidden');
+    userInfo.classList.add('hidden');
+}
+
         Object.entries(data.macros).forEach(([id,count])=>{
             const el = document.getElementById('leaderboard-'+id);
             if(el) animateCounter(el.id, count);
@@ -802,50 +871,6 @@ function animateCounter(id, finalValue){
 }
 
 /* ---------- Download buttons ---------- */
-document.querySelectorAll('.download-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const macro = btn.dataset.macro;
-    const key   = 'macro-downloaded-' + macro;          // localStorage flag
-
-    /* placeholder cards just warn */
-    if (!['better-tiny-task', 'grow-garden'].includes(macro)) {
-      alert('This macro will be available soon!');
-      return;
-    }
-
-    /* already downloaded once in this browser? */
-    if (localStorage.getItem(key)) {
-      // direct GET — no counter bump
-      window.location.href = `${API}/macros/${macro}.zip`;
-      return;
-    }
-
-    /* first-time click → bump counter, then save the ZIP */
-    const label = btn.textContent;
-    btn.disabled  = true;
-    btn.textContent = 'Downloading…';
-
-    /* 1 – POST and get the ZIP as a blob */
-    const blob = await fetch(`${API}/download/${macro}`, { method: 'POST' })
-                       .then(r => r.blob());
-
-    /* 2 – trigger browser download */
-    const url = URL.createObjectURL(blob);
-    const a   = document.createElement('a');
-    a.href = url;
-    a.download = `${macro}.zip`;
-    document.body.appendChild(a);   // Firefox needs it in the DOM
-    a.click();
-    URL.revokeObjectURL(url);
-
-    /* 3 – remember we counted this browser once & refresh stats */
-    localStorage.setItem(key, '1');
-    await refreshStats();
-
-    btn.disabled  = false;
-    btn.textContent = label;
-  });
-});
 
 /* ---------- Trigger counter refresh on scroll (once) ---------- */
 let countersLoaded = false;
@@ -856,7 +881,199 @@ window.addEventListener('scroll', ()=>{
         refreshStats();
     }
 });
-</script>
-</body>
 
+
+// Initial stats fetch on load
+refreshStats();
+
+
+
+</script>
+<!-- Login required modal -->
+<div id="loginModal" class="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center hidden z-50">
+  <div class="bg-gray-900 text-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center">
+    <h2 class="text-2xl font-semibold mb-4">Login required</h2>
+    <p class="mb-6">You need to sign in to download this macro.</p>
+    <div class="flex justify-center space-x-4">
+      <button id="modalLoginBtn" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 rounded-full focus:outline-none">Sign in</button>
+      <button id="modalCloseBtn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-full focus:outline-none">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="captcha-modal" class="fixed inset-0 z-50 hidden bg-black/70 flex items-center justify-center">
+  <div class="w-full max-w-md rounded-2xl bg-zinc-900 p-6 text-zinc-100 shadow-xl">
+    <h3 class="text-lg font-semibold mb-2">Quick bot check</h3>
+    <p class="text-sm text-zinc-300 mb-4">Please complete the challenge to start your download.</p>
+    <div id="cf-turnstile" class="mb-4"></div>
+    <div class="flex gap-2">
+      <button id="captcha-cancel" class="px-3 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600">Cancel</button>
+      <div id="captcha-status" class="text-sm text-zinc-400 ml-auto">Waiting for challenge…</div>
+    </div>
+  </div>
+</div>
+<script>/* ---- Download guard v2 ---- */
+function userLoggedIn(){
+  return loginBtn && loginBtn.classList.contains('hidden');
+}
+function showLoginModal(){
+  loginModal.classList.remove('hidden');
+}
+function hideLoginModal(){
+  loginModal.classList.add('hidden');
+}
+const loginModal = document.getElementById('loginModal');
+const modalLoginBtn = document.getElementById('modalLoginBtn');
+const modalCloseBtn = document.getElementById('modalCloseBtn');
+modalCloseBtn?.addEventListener('click', hideLoginModal);
+modalLoginBtn?.addEventListener('click', ()=>{
+  hideLoginModal();
+  loginBtn?.click();
+});
+
+/* Intercept only if user not logged in */
+document.addEventListener('click', function(e){
+  const link = e.target.closest('a');
+  if(!link) return;
+  const url = new URL(link.href, window.location.href);
+  const protectedPath = url.pathname.startsWith('/download/') || url.pathname.startsWith('/macros/');
+  if(!protectedPath) return;
+  if(!userLoggedIn()){
+    e.preventDefault();
+    showLoginModal();
+  }
+}, false);
+
+  const TURNSTILE_SITE_KEY = '0x4AAAAAABszK4mjX8yz85sv'; // <-- paste Site Key
+
+  const captchaModal  = document.getElementById('captcha-modal');
+  const captchaCancel = document.getElementById('captcha-cancel');
+  const captchaStatus = document.getElementById('captcha-status');
+
+  function openCaptcha()  { captchaModal.classList.remove('hidden'); }
+  function closeCaptcha() { captchaModal.classList.add('hidden'); }
+
+  function waitForTurnstile() {
+    return new Promise(r => {
+      if (window.turnstile) return r();
+      const t = setInterval(() => { if (window.turnstile) { clearInterval(t); r(); } }, 25);
+    });
+  }
+
+  let cfWidgetId = null;
+  let challenge = null; // {resolve, reject, finished, timer}
+
+  // Cancel button: fully abort current challenge
+  captchaCancel?.addEventListener('click', () => {
+    try { if (cfWidgetId !== null) turnstile.reset(cfWidgetId); } catch {}
+    closeCaptcha();
+    if (challenge && !challenge.finished) {
+      challenge.finished = true;
+      clearTimeout(challenge.timer);
+      challenge.reject(new Error('Challenge cancelled'));
+      challenge = null;
+    }
+  });
+
+  async function getVisibleCfToken() {
+    await waitForTurnstile();
+
+    captchaStatus && (captchaStatus.textContent = 'Waiting for challenge…');
+    openCaptcha();
+
+    if (cfWidgetId === null) {
+      cfWidgetId = turnstile.render('#cf-turnstile', {
+        sitekey: TURNSTILE_SITE_KEY,
+        theme: 'dark',
+        size: 'flexible', // visible ('normal' | 'compact' | 'flexible')
+        callback: token => {
+          if (!challenge || challenge.finished) return;
+          challenge.finished = true;
+          clearTimeout(challenge.timer);
+          closeCaptcha();
+          challenge.resolve(token);
+          challenge = null;
+        },
+        'error-callback': () => {
+          if (!challenge || challenge.finished) return;
+          challenge.finished = true;
+          clearTimeout(challenge.timer);
+          closeCaptcha();
+          challenge.reject(new Error('Challenge failed'));
+          challenge = null;
+        },
+        'timeout-callback': () => {
+          if (!challenge || challenge.finished) return;
+          challenge.finished = true;
+          clearTimeout(challenge.timer);
+          closeCaptcha();
+          challenge.reject(new Error('Challenge timeout'));
+          challenge = null;
+        },
+      });
+    } else {
+      // Fresh challenge each submit
+      turnstile.reset(cfWidgetId);
+    }
+
+    return new Promise((resolve, reject) => {
+      challenge = { resolve, reject, finished: false };
+      challenge.timer = setTimeout(() => {
+        if (challenge && !challenge.finished) {
+          challenge.finished = true;
+          closeCaptcha();
+          reject(new Error('Challenge timeout'));
+          challenge = null;
+        }
+      }, 10000);
+    });
+  }
+
+  // Attach to your download forms
+  document.querySelectorAll('form[action^="/download/"]').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button, input[type="submit"]');
+      if (btn) btn.disabled = true;
+
+      try {
+        const cfToken = await getVisibleCfToken(); // may throw "Challenge cancelled"
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cfToken })
+        });
+
+        if (resp.status === 401) { window.location = LOGIN_URL; return; }
+
+        if (!resp.ok) {
+          let msg = resp.statusText;
+          try { const data = await resp.json(); if (data?.error) msg = `${resp.status} ${data.error}`; } catch {}
+          alert(`Download failed: ${msg}`);
+          return;
+        }
+
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = form.action.split('/').pop() + '.zip';
+        document.body.appendChild(a); a.click();
+        URL.revokeObjectURL(url); a.remove();
+      } catch (err) {
+        // Silent on cancel; alert otherwise
+        if (!/cancelled/i.test(String(err?.message))) {
+          console.error(err);
+          alert(err?.message || 'Challenge failed. Please try again.');
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  });
+</script>
+<!-- Turnstile Modal -->
+<div id="cf-turnstile"></div>
+</body>
 </html>
