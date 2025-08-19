@@ -2,26 +2,27 @@
   "name": "macro-backend",
   "version": "1.1.1",
   "type": "module",
+
   "scripts": {
-    "start": "concurrently \"node server.js\" \"node bot.js\"",
+    "start":  "concurrently \"node server.js\" \"node bot.js\"",
     "server": "node server.js",
-    "bot": "node bot.js"
+    "bot":    "node bot.js"
   },
+
   "dependencies": {
-    "better-sqlite3": "^9.4.0",
-    "cookie-parser": "^1.4.6",
-    "cors": "^2.8.5",
-    "discord.js": "^14.14.1",
-    "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "node-fetch": "^3.3.2",
-    "passport": "^0.7.0",
+    "better-sqlite3":   "^9.4.0",
+    "cookie-parser":    "^1.4.6",
+    "cors":             "^2.8.5",
+    "discord.js":       "^14.14.1",
+    "express":          "^4.19.2",
+    "express-session":  "^1.18.0",
+    "node-fetch":       "^3.3.2",
+    "passport":         "^0.7.0",
     "passport-discord": "^0.1.4",
-    "querystring": "^0.2.1",
-    "uuid": "^9.0.1",
-    "csurf": "^1.11.0",
-    "express-rate-limit": "^7.4.0"
+    "uuid":             "^9.0.1",
+    "querystring":      "^0.2.1"
   },
+
   "devDependencies": {
     "concurrently": "^7.6.0"
   }
