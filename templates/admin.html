@@ -2,38 +2,63 @@
 <html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8" />
-  <title>MacroStack – Admin Bans</title>
+  <title>MacroStack – Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="h-full bg-gray-900 text-gray-100 p-10 font-mono">
-  <h1 class="text-3xl font-bold mb-8">🛡️ Ban Manager</h1>
+  <h1 class="text-3xl font-bold mb-8">🛠️ Admin Console</h1>
 
-  <div id="app" class="space-y-10">
-    <!-- ID bans ---------------------------------------------------- -->
+  <div id="app" class="space-y-12">
+
+    <!-- Maintenance Mode ---------------------------------------------------- -->
+    <section class="border border-gray-800 rounded-lg p-5 bg-gray-950">
+      <div class="flex items-center justify-between gap-4">
+        <h2 class="text-xl font-bold">Maintenance Mode</h2>
+        <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+          <input id="maintToggle" type="checkbox" class="h-5 w-5 accent-indigo-500">
+          <span class="text-sm text-gray-300">Enable</span>
+        </label>
+      </div>
+
+      <p class="text-sm text-gray-400 mt-2">
+        When enabled, the entire site returns a blank maintenance page to non-admins.
+        You can customize the HTML below.
+      </p>
+
+      <div class="mt-4 grid gap-3">
+        <label for="maintHtml" class="text-sm text-gray-300">Downtime page HTML</label>
+        <textarea id="maintHtml" class="w-full h-64 bg-gray-800 rounded p-3 text-sm leading-5"
+          spellcheck="false"></textarea>
+
+        <div class="flex gap-3 mt-2">
+          <button id="saveMaint" class="px-4 py-2 bg-indigo-600 rounded hover:bg-indigo-700">💾 Save</button>
+          <button id="previewMaint" class="px-4 py-2 bg-gray-700 rounded hover:bg-gray-600">👁️ Preview</button>
+        </div>
+        <div id="maintStatus" class="text-sm text-gray-400"></div>
+      </div>
+    </section>
+
+    <!-- Ban Manager (existing) --------------------------------------------- -->
     <section>
       <h2 class="text-xl mb-4">Discord ID bans</h2>
       <form id="idForm" class="flex gap-4 mb-4">
         <input id="idInput" type="text" placeholder="Snowflake…" required
                class="flex-1 px-3 py-2 bg-gray-800 rounded" />
-        <button class="px-4 py-2 bg-indigo-600 rounded hover:bg-indigo-700">
-          ➕ Add
-        </button>
+        <button class="px-4 py-2 bg-indigo-600 rounded hover:bg-indigo-700">➕ Add</button>
       </form>
       <table id="idTable" class="w-full text-sm"></table>
     </section>
 
-    <!-- Fingerprint bans ------------------------------------------- -->
     <section>
       <h2 class="text-xl mb-4">Fingerprint bans</h2>
       <form id="fpForm" class="flex gap-4 mb-4">
         <input id="fpInput" type="text" placeholder="visitorId…" required
                class="flex-1 px-3 py-2 bg-gray-800 rounded" />
-        <button class="px-4 py-2 bg-indigo-600 rounded hover:bg-indigo-700">
-          ➕ Add
-        </button>
+        <button class="px-4 py-2 bg-indigo-600 rounded hover:bg-indigo-700">➕ Add</button>
       </form>
       <table id="fpTable" class="w-full text-sm"></table>
     </section>
+
   </div>
 
 <script>
@@ -49,43 +74,68 @@ async function api(path, opts = {}) {
   return r.json();
 }
 
+/* ---------------- Maintenance UI ---------------- */
+async function loadMaint() {
+  const data = await api('/admin/config');
+  $('maintToggle').checked = !!data.maintenance_enabled;
+  $('maintHtml').value = data.maintenance_html || '';
+}
+
+async function saveMaint() {
+  const body = {
+    maintenance_enabled: $('maintToggle').checked,
+    maintenance_html: $('maintHtml').value
+  };
+  await api('/admin/config', { method: 'POST', body: JSON.stringify(body) });
+  status('Saved maintenance settings.');
+}
+
+function status(msg) {
+  const el = $('maintStatus');
+  el.textContent = msg;
+  setTimeout(()=>{ el.textContent=''; }, 2000);
+}
+
+$('saveMaint').addEventListener('click', async () => {
+  try { await saveMaint(); } catch(e){ alert('Save failed'); console.error(e); }
+});
+
+$('previewMaint').addEventListener('click', () => {
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (w) {
+    w.document.open();
+    w.document.write($('maintHtml').value || '<html><body><p>(empty)</p></body></html>');
+    w.document.close();
+  }
+});
+
+/* ---------------- Ban Manager (existing) -------- */
 function render(table, rows, type) {
   table.innerHTML = rows.length
-    ? rows
-        .map(
-          v => `<tr>
-                  <td class="py-1 pl-1">${v}</td>
-                  <td class="px-2">
-                    <button data-v="${v}" data-t="${type}"
-                            class="text-red-400 hover:text-red-200">🗑️</button>
-                  </td>
-                </tr>`
-        )
-        .join('')
+    ? rows.map(v => `<tr>
+        <td class="py-1 pl-1">${v}</td>
+        <td class="px-2">
+          <button data-v="${v}" data-t="${type}" class="text-red-400 hover:text-red-200">🗑️</button>
+        </td>
+      </tr>`).join('')
     : `<tr><td class="py-1 italic text-gray-500">— none —</td></tr>`;
 }
 
-async function refresh() {
+async function refreshBans() {
   const data = await api('/admin/bans');
   render($('idTable'), data.ids, 'id');
-  render($('fpTable'), data.fp,  'fp');
+  render($('fpTable'), data.fp, 'fp');
 }
 
-/* ---------- updated click handler ---------- */
 $('app').addEventListener('click', async e => {
   const btn = e.target.closest('button');
   if (!btn || !btn.hasAttribute('data-v')) return;
-
-  const { v, t } = btn.dataset;               // t = 'id' | 'fp', v may be ''
-  const url = v
-    ? `/admin/ban/${t}/${encodeURIComponent(v)}`
-    : `/admin/ban/${t}`;                      // no trailing slash when v == ''
-
+  const { v, t } = btn.dataset;
+  const url = v ? `/admin/ban/${t}/${encodeURIComponent(v)}` : `/admin/ban/${t}`;
   await api(url, { method: 'DELETE' });
-  refresh();
+  refreshBans();
 });
 
-/* ----- add + refresh forms stay the same ----- */
 $('idForm').addEventListener('submit', async e => {
   e.preventDefault();
   await api('/admin/ban', {
@@ -93,7 +143,7 @@ $('idForm').addEventListener('submit', async e => {
     body: JSON.stringify({ type: 'id', value: $('idInput').value.trim() })
   });
   $('idInput').value = '';
-  refresh();
+  refreshBans();
 });
 
 $('fpForm').addEventListener('submit', async e => {
@@ -103,10 +153,13 @@ $('fpForm').addEventListener('submit', async e => {
     body: JSON.stringify({ type: 'fp', value: $('fpInput').value.trim() })
   });
   $('fpInput').value = '';
-  refresh();
+  refreshBans();
 });
 
-refresh();
+(async function init(){
+  await loadMaint();
+  await refreshBans();
+})();
 </script>
 </body>
 </html>
