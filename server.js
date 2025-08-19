@@ -171,6 +171,11 @@ app.get('/auth/discord/callback', (req, res, next) => {
 app.get('/logout',(req,res)=>{ req.logout(()=>{}); res.redirect('/'); });
 
 /* ---------- Static front-end ---------- */
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+
+app.use('/static', express.static(path.join(__dirname, 'static')));
 app.use(express.static(TEMPL_DIR));
 app.get('/', (_q,res)=>res.sendFile('index.html',{root:TEMPL_DIR}));
 
