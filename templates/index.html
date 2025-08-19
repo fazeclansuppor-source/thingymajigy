@@ -1111,14 +1111,5 @@ document.addEventListener('click', function(e){
 </script>
 <!-- Turnstile Modal -->
 <div id="cf-turnstile"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fingerprintjs2/2.1.4/fingerprint2.min.js"></script>
-<script>
-  if (!document.cookie.includes('fp=')) {
-    new Fingerprint2().get(function(result) {
-      document.cookie = `fp=${result}; path=/; max-age=${10*365*24*60*60}; sameSite=lax; secure=${window.location.protocol === 'https:'}`;
-      // Reload or continue; the server will sign it on next request
-    });
-  }
-</script>
 </body>
 </html>
