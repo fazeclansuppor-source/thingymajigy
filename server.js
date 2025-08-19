@@ -97,7 +97,6 @@ const isIdBanned = id => db.prepare('SELECT 1 FROM banned_ids WHERE id=?').get(i
 const isFpBanned = fp => db.prepare('SELECT 1 FROM banned_fp WHERE fp=?').get(fp);
 
 /* ---------- Express & passport ---------- */
-/* ---------- Express & passport ---------- */
 const app = express();
 app.set('trust proxy', 1); // behind Koyeb
 app.use(cors());
@@ -120,6 +119,30 @@ const ORIGIN   = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\
 const CALLBACK = `${ORIGIN}/auth/discord/callback`;
 console.log('OAuth ORIGIN =', ORIGIN);
 console.log('OAuth CALLBACK =', CALLBACK);
+
+// ---- Cloudflare Turnstile verify helper ----
+async function verifyTurnstile(token, remoteip) {
+  try {
+    if (!TURNSTILE_SECRET || !token) return false;
+
+    const body = new URLSearchParams();
+    body.append('secret', TURNSTILE_SECRET);   // <-- your Turnstile SECRET key (server-side)
+    body.append('response', token);            // <-- token from the browser
+    if (remoteip) body.append('remoteip', remoteip);
+
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    });
+
+    const data = await r.json();
+    return !!data.success;
+  } catch (e) {
+    console.error('Turnstile verify error:', e);
+    return false;
+  }
+}
 
 passport.use(new Discord({
   clientID: process.env.CLIENT_ID,
