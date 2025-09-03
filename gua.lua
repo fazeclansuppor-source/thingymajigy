@@ -964,6 +964,22 @@ local AUTO_FAIRY = {
     _task = nil,
     _busy = false,
     checkInterval = 5, -- Check every 5 seconds
+    -- Wishes
+    wishEnabled = false,
+    wishInterval = 30, -- seconds; conservative backoff
+    _wishTask = nil,
+    _wishBusy = false,
+    lastWishAt = 0,
+    -- Rewards
+    claimEnabled = false,
+    preferredText = "",  -- comma/space separated keywords
+    preferredSet = {},    -- parsed lowercased tokens
+    _claimTask = nil,
+    _claimBusy = false,
+    -- Reward catalog for user selection (discovered dynamically)
+    knownRewards = {},     -- array of {name=string, selected=bool}
+    selectedRewards = {},  -- array of refs from knownRewards where selected=true
+    autoRestartEnabled = false,
 }
 
 -- ============================== AUTO-SHOP =================================
@@ -1207,8 +1223,606 @@ local function stopAutoFairy(toast)
         task.cancel(AUTO_FAIRY._task)
         AUTO_FAIRY._task = nil
     end
+
+    -- Stop wish & claim loops if running
+    AUTO_FAIRY.wishEnabled = false
+    AUTO_FAIRY.claimEnabled = false
+    AUTO_FAIRY._wishBusy = false
+    AUTO_FAIRY._claimBusy = false
+    if AUTO_FAIRY._wishTask then task.cancel(AUTO_FAIRY._wishTask); AUTO_FAIRY._wishTask = nil end
+    if AUTO_FAIRY._claimTask then task.cancel(AUTO_FAIRY._claimTask); AUTO_FAIRY._claimTask = nil end
     
     if toast then toast("Auto-Fairy OFF") end
+end
+
+-- ================= FAIRY: MAKE A WISH =================
+-- ================= FAIRY: MAKE A WISH (hybrid, de-duped) =================
+local function makeFairyWish()
+    if AUTO_FAIRY._wishBusy then return false end
+    AUTO_FAIRY._wishBusy = true
+    local ok = pcall(function()
+        game:GetService("ReplicatedStorage"):WaitForChild("GameEvents"):WaitForChild("FairyService"):WaitForChild("MakeFairyWish"):FireServer()
+    end)
+    AUTO_FAIRY._wishBusy = false
+    if ok then AUTO_FAIRY.lastWishAt = os.clock() end
+    return ok
+end
+
+local function startAutoWish(toast)
+    if AUTO_FAIRY._wishTask then return end
+    AUTO_FAIRY.wishEnabled = true
+    if toast then toast("Auto Make-a-Wish ON (every 5s)") end
+    AUTO_FAIRY._wishTask = task.spawn(function()
+        while AUTO_FAIRY.wishEnabled do
+            makeFairyWish()
+            task.wait(5)
+        end
+    end)
+end
+
+local function stopAutoWish(toast)
+    AUTO_FAIRY.wishEnabled = false
+    if AUTO_FAIRY._wishTask then task.cancel(AUTO_FAIRY._wishTask); AUTO_FAIRY._wishTask=nil end
+    if toast then toast("Auto Make-a-Wish OFF") end
+end
+
+-- ============== FAIRY: REWARD CHOOSER HANDLING ==============
+local function parsePreferredRewards(text)
+    AUTO_FAIRY.preferredSet = {}
+    if typeof(text) ~= "string" then text = "" end
+    AUTO_FAIRY.preferredText = text
+    -- FIX: correct the delimiter pattern so commas/semicolons/pipes/newlines split properly
+    local norm = text
+        :gsub("[,;|\n\t]", " ")
+        :gsub("[\"'`%[%]%(%)]", "")
+        :lower()
+    for token in norm:gmatch("%S+") do
+        if #token > 1 then AUTO_FAIRY.preferredSet[token] = true end
+    end
+    if DEBUG_MODE then
+        local keys = {}; for k,_ in pairs(AUTO_FAIRY.preferredSet) do table.insert(keys, k) end; table.sort(keys)
+        print("[FAIRY] Preferred rewards:", next(AUTO_FAIRY.preferredSet) and table.concat(keys, ", ") or "<none>")
+    end
+end
+
+-- Try to find the rewards chooser UI and extract 3 candidates: {id, name, frame}
+local function getFairyRewardsFromUI()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return {} end
+    local results = {}
+    -- heuristic: any ScreenGui with both 'Fairy' and 'Reward' in its name or descendants
+    local function tryIn(root)
+        for _, node in ipairs(root:GetDescendants()) do
+            if node:IsA("TextButton") or node:IsA("ImageButton") or node:IsA("Frame") then
+                -- Look for id in attributes or Value children
+                local rid = node:GetAttribute("RewardId") or node:GetAttribute("Id") or node:GetAttribute("UUID")
+                if not rid then
+                    local sv = node:FindFirstChild("RewardId") or node:FindFirstChild("Id") or node:FindFirstChild("UUID")
+                    if sv and sv:IsA("StringValue") then rid = sv.Value end
+                end
+                -- Try to read a visible name on this node
+                local nameTxt
+                for _, d in ipairs(node:GetDescendants()) do
+                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and #d.Text>0 then
+                        nameTxt = d.Text; break
+                    end
+                end
+                if rid and nameTxt then
+                    table.insert(results, {id=rid, name=nameTxt, frame=node})
+                end
+            end
+        end
+    end
+    for _, gui in ipairs(pg:GetChildren()) do
+        local n = gui.Name:lower()
+        if n:find("fairy") and (n:find("reward") or n:find("chooser") or n:find("wish") or n:find("quest")) then
+            tryIn(gui)
+        end
+    end
+    return results
+end
+
+-- More robust grouping: find frames that contain BOTH a readable name and a UUID-looking string
+local function getFairyRewardsFromUI_Grouped()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return {} end
+    local UUID_PATTERN = "[%x][%x][%x][%x][%x][%x][%x][%x]%-[%x][%x][%x][%x]%-[%x][%x][%x][%x]%-[%x][%x][%x][%x]%-[%x][%x][%x][%x][%x][%x][%x][%x][%x][%x][%x][%x]"
+    local results = {}
+    local function isActuallyVisible(gui)
+        if not gui or not gui:IsA("GuiObject") then return false end
+        if not gui.Visible then return false end
+        local p = gui.Parent
+        while p and p ~= pg do
+            if p:IsA("GuiObject") and p.Visible == false then return false end
+            if p:IsA("ScreenGui") and p.Enabled == false then return false end
+            p = p.Parent
+        end
+        return true
+    end
+
+    local function extractPair(container)
+        local rid, nameTxt
+        -- search values/attributes/texts for UUIDs
+        local function tryNode(n)
+            if not n then return end
+            -- Attributes
+            for k,v in pairs(n:GetAttributes()) do
+                if typeof(v)=="string" and v:match(UUID_PATTERN) then rid = v; break end
+            end
+            if rid then return end
+            -- StringValues
+            for _,ch in ipairs(n:GetChildren()) do
+                if ch:IsA("StringValue") and typeof(ch.Value)=="string" and ch.Value:match(UUID_PATTERN) then rid = ch.Value; break end
+            end
+            -- Texts
+            if (n:IsA("TextLabel") or n:IsA("TextButton")) and n.Text and n.Text:match(UUID_PATTERN) then rid = n.Text end
+        end
+
+        for _,d in ipairs(container:GetDescendants()) do
+            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and #d.Text>0 and not nameTxt then
+                local t = tostring(d.Text)
+                -- ignore obvious uuid strings for the name
+                if not t:match(UUID_PATTERN) then nameTxt = t end
+            end
+            if not rid then tryNode(d) end
+            if nameTxt and rid then break end
+        end
+    if nameTxt and rid then return {id=rid, name=nameTxt, frame=container} end
+    -- Fallback: if no id, still return clickable frame to allow UI-click fallback later
+    if nameTxt then return {id=nil, name=nameTxt, frame=container} end
+        return nil
+    end
+
+    local function scanGui(root)
+        for _, node in ipairs(root:GetDescendants()) do
+            if node:IsA("Frame") then
+                local rec = extractPair(node)
+                if rec and isActuallyVisible(node) then table.insert(results, rec) end
+            end
+        end
+    end
+
+    for _, gui in ipairs(pg:GetChildren()) do
+        local n = gui.Name:lower()
+        if n:find("fairy") and (n:find("reward") or n:find("chooser") or n:find("wish") or n:find("quest")) then
+            scanGui(gui)
+        end
+    end
+    return results
+end
+
+local function _mergeKnownRewardsFrom(cands)
+    if not cands or #cands==0 then return end
+    local seen = {}
+    for _, item in ipairs(AUTO_FAIRY.knownRewards) do seen[string.lower(item.name)] = item end
+    for _, rec in ipairs(cands) do
+        local key = string.lower(tostring(rec.name or ""))
+        if key ~= "" and not seen[key] then
+            local entry = {name = rec.name, selected = false}
+            table.insert(AUTO_FAIRY.knownRewards, entry)
+            seen[key] = entry
+        end
+    end
+    table.sort(AUTO_FAIRY.knownRewards, function(a,b) return a.name < b.name end)
+end
+
+-- Seed the known rewards list from game data: ReplicatedStorage.Data.FairyMilestonesData
+local function _seedKnownRewardsFromData()
+    local function addName(name)
+        if not name or #tostring(name) == 0 then return end
+        local key = string.lower(tostring(name))
+        for _, e in ipairs(AUTO_FAIRY.knownRewards) do
+            if string.lower(e.name) == key then return end
+        end
+        table.insert(AUTO_FAIRY.knownRewards, { name = tostring(name), selected = false })
+    end
+
+    local ok, data = pcall(function()
+        local rs = ReplicatedStorage
+        local mod = (rs:FindFirstChild("Data") and rs.Data:FindFirstChild("FairyMilestonesData"))
+                   or rs:FindFirstChild("FairyMilestonesData")
+        if mod and mod:IsA("ModuleScript") then
+            return require(mod)
+        end
+    end)
+
+    if ok and type(data) == "table" and type(data.Rewards) == "table" then
+        -- Rewards is an array of tiers; each tier is an array of entries with .Reward.{Type,Value,Quantity}
+        for _, tier in ipairs(data.Rewards) do
+            if type(tier) == "table" then
+                for _, entry in ipairs(tier) do
+                    local r = entry and entry.Reward
+                    if type(r) == "table" and r.Value then
+                        addName(r.Value)
+                    end
+                end
+            end
+        end
+    else
+        -- Fallback minimal list (in case require fails)
+        for _, val in ipairs({
+            "Enchanted Seed Pack","FairyPoints","Enchanted Crate","Enchanted Egg",
+            "Glimmering Radar","Fairy Targeter","Mutation Spray Glimmering",
+            "Pet Shard Glimmering","Aurora Vine"
+        }) do addName(val) end
+    end
+
+    table.sort(AUTO_FAIRY.knownRewards, function(a,b) return a.name < b.name end)
+end
+
+-- Debug helper: dump current chooser candidates with paths/UUIDs to console and file
+local function dumpFairyChooser()
+    local out = {}
+    local cands = getFairyRewardsFromUI_Grouped()
+    table.insert(out, ("Found %d candidate(s)"):format(#cands))
+    for i, rec in ipairs(cands) do
+        local path = {}
+        local n = rec.frame
+        while n and n ~= n.Parent do
+            table.insert(path, 1, n.Name)
+            n = n.Parent
+            if n and n:IsA("ScreenGui") then table.insert(path, 1, n.Name); break end
+        end
+        table.insert(out, ("[%d] name='%s' id='%s' path=%s"):format(i, tostring(rec.name), tostring(rec.id), table.concat(path, "/")))
+        -- Also scrape texts inside the frame for visibility
+        local texts = {}
+        for _, d in ipairs(rec.frame:GetDescendants()) do
+            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text and #d.Text>0 then
+                table.insert(texts, d.Text)
+            end
+        end
+        if #texts>0 then table.insert(out, "    texts: "..table.concat(texts, " | ")) end
+    end
+    local blob = table.concat(out, "\n")
+    print("[FAIRY] Chooser dump:\n"..blob)
+    pcall(writefile, "FairyChooserDump.txt", "["..os.date("%c").."]\n"..blob.."\n\n")
+    return cands
+end
+
+-- Debug helper: scan for wish buttons in PlayerGui
+local function dumpWishButtons()
+    local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then print("[WISH] No PlayerGui found"); return {} end
+    
+    local buttons = {}
+    for _,gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            local guiName = gui.Name:lower()
+            if guiName:find("fairy") or guiName:find("quest") or guiName:find("wish") then
+                for _,descendant in ipairs(gui:GetDescendants()) do
+                    if (descendant:IsA("TextButton") or descendant:IsA("ImageButton")) then
+                        local text = (descendant.Text or ""):lower()
+                        local buttonName = descendant.Name:lower()
+                        local visible = descendant.Visible and "✓" or "✗"
+                        
+                        table.insert(buttons, {
+                            gui = gui.Name,
+                            name = descendant.Name,
+                            text = descendant.Text or "",
+                            visible = visible,
+                            path = descendant:GetFullName()
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    print("[WISH] Found", #buttons, "buttons in fairy-related GUIs:")
+    for i, btn in ipairs(buttons) do
+        print(string.format("[%d] %s | %s | Text: '%s' | Visible: %s", 
+            i, btn.gui, btn.name, btn.text, btn.visible))
+    end
+    
+    local lines = {"GUI | Button Name | Text | Visible | Full Path"}
+    for _, btn in ipairs(buttons) do
+        table.insert(lines, btn.gui .. " | " .. btn.name .. " | " .. btn.text .. " | " .. btn.visible .. " | " .. btn.path)
+    end
+    
+    pcall(writefile, "WishButtonsDump.txt", "["..os.date("%c").."]\n" .. table.concat(lines, "\n"))
+    
+    return buttons
+end
+
+local function _updatePreferredFromSelections()
+    AUTO_FAIRY.selectedRewards = {}
+    AUTO_FAIRY.preferredSet = {}
+    for _, entry in ipairs(AUTO_FAIRY.knownRewards) do
+        if entry.selected then
+            table.insert(AUTO_FAIRY.selectedRewards, entry)
+            local name = string.lower(entry.name)
+            -- add full name and its tokens as keywords
+            AUTO_FAIRY.preferredSet[name] = true
+            for tok in name:gmatch("%S+") do AUTO_FAIRY.preferredSet[tok] = true end
+        end
+    end
+    if DEBUG_MODE then
+        local keys = {}; for k,_ in pairs(AUTO_FAIRY.preferredSet) do table.insert(keys, k) end; table.sort(keys)
+        print("[FAIRY] Preferred set from selection:", next(AUTO_FAIRY.preferredSet) and table.concat(keys, ", ") or "<none>")
+    end
+end
+
+local function scoreReward(rec)
+    local name = string.lower(tostring(rec.name or ""))
+    local score = 0
+    -- rarity keywords
+    local rar = {permanent=100, mythic=60, legendary=50, epic=40, rare=30, uncommon=20, common=10}
+    for k,v in pairs(rar) do if name:find(k,1,true) then score = score + v end end
+    -- amount extraction (e.g., +5, 1,000, 2k, 3m)
+    local amt = 0
+    local num = name:match("(%d[%d,%.]*)%s*[kKmM]?")
+    if num then
+        num = num:gsub(",", "")
+        local n = tonumber(num)
+        if n then amt = n end
+        if name:find("k",1,true) then amt = amt * 1e3 end
+        if name:find("m",1,true) then amt = amt * 1e6 end
+        score = score + math.min(amt/100, 200) -- cap amount contribution
+    end
+    -- item bias
+    if name:find("pet",1,true) or name:find("seed",1,true) or name:find("gear",1,true) then score = score + 15 end
+    rec._score = score; rec._amount = amt; return score
+end
+
+local function chooseBestReward(candidates)
+    if not candidates or #candidates==0 then return nil end
+    -- prefer user keywords
+    if next(AUTO_FAIRY.preferredSet) then
+        for _, rec in ipairs(candidates) do
+            local n = string.lower(tostring(rec.name or ""))
+            for token,_ in pairs(AUTO_FAIRY.preferredSet) do
+                if n:find(token,1,true) then return rec end
+            end
+        end
+    end
+    -- else score by heuristic
+    local best, bs = nil, -1e9
+    for _, rec in ipairs(candidates) do
+        local s = scoreReward(rec)
+        if s > bs then best, bs = rec, s end
+    end
+    return best
+end
+
+local function claimFairyRewardById(id)
+    if not id or #tostring(id)==0 then return false, "no id" end
+    if AUTO_FAIRY._claimBusy then return false, "busy" end
+    AUTO_FAIRY._claimBusy = true
+    local ok, err = pcall(function()
+        local r = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("FairyService"):WaitForChild("ClaimFairyReward")
+        r:FireServer(id)
+    end)
+    AUTO_FAIRY._claimBusy = false
+    return ok, err
+end
+
+local function clickGuiCenter(gui)
+    local target = gui
+    for _,d in ipairs(gui:GetDescendants()) do
+        if d:IsA("TextButton") or d:IsA("ImageButton") then
+            local t = string.lower(tostring(d.Text or ""))
+            local n = string.lower(d.Name)
+            if t:find("claim") or t:find("select") or n:find("claim") or n:find("select") then
+                target = d; break
+            end
+            target = d -- fallback to first button if none clearly labeled
+        end
+    end
+    local p,s = target.AbsolutePosition, target.AbsoluteSize
+    local x,y = p.X + s.X/2, p.Y + s.Y/2
+    local vim = game:GetService("VirtualInputManager")
+    vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+    task.wait(0.02)
+    vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+end
+
+-- ===== FAIRY: Live choices from DataService (authoritative) =====
+local DataService
+pcall(function()
+    DataService = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("DataService"))
+end)
+
+local function getFairyChoicesFromDS()
+    local out = {}
+    if not DataService or not DataService.GetData then return out end
+    local ok, data = pcall(function() return DataService:GetData() end)
+    if not ok or not data then return out end
+    local fq = data.FairyQuests
+    local list = fq and (fq.PendingRewards or fq.Choices)   -- support either name
+    if type(list) ~= "table" then return out end
+    for _, c in ipairs(list) do
+        -- normalize to {id,name,frame=nil}
+        out[#out+1] = {
+            id    = c.UUID or c.Id,
+            name  = tostring(c.Value or c.Name or ""),
+            frame = nil,
+            qty   = c.Quantity or c.Amount,
+            typ   = tostring(c.Type or "")
+        }
+    end
+    return out
+end
+
+-- subscribe to DS updates so we can auto-claim the moment choices land
+local function subscribeFairyChoicesUpdates(onChoices)
+    if not DataService or not DataService.GetPathSignal then return end
+    local sig = DataService:GetPathSignal("FairyQuests/PendingRewards/@")
+              or DataService:GetPathSignal("FairyQuests/Choices/@")
+    if sig then
+        trackConn(sig:Connect(function()
+            local choices = getFairyChoicesFromDS()
+            if onChoices and #choices > 0 then onChoices(choices) end
+        end))
+    end
+end
+
+-- also hook the UI open event (often fires right after DS updates)
+local function hookChooseRewardsUI(onOpen)
+    local ge = ReplicatedStorage:FindFirstChild("GameEvents")
+    local ev = ge and ge:FindFirstChild("ChooseRewardsUI")
+    if ev and ev:IsA("RemoteEvent") then
+        trackConn(ev.OnClientEvent:Connect(function()
+            task.wait(0.05)
+            if onOpen then onOpen() end
+        end))
+    end
+end
+
+-- FAIRY: restart helpers
+local function restartFairyTrack()
+    local ok, err = pcall(function()
+        ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("FairyService"):WaitForChild("RestartFairyTrack"):FireServer()
+    end)
+    return ok, err
+end
+
+local function isFairyTrackMaxedFromDS()
+    if not DataService or not DataService.GetData then return false end
+    local ok, data = pcall(function() return DataService:GetData() end)
+    if not ok or not data then return false end
+    local fq = data.FairyQuests or data.Fairy or data.FairyEvent
+    if type(fq) ~= "table" then return false end
+    -- Heuristics across possible schemas
+    if fq.Maxed == true or fq.IsMaxed == true or fq.Completed == true then return true end
+    local tier, maxTier = tonumber(fq.Tier or fq.Level), tonumber(fq.MaxTier or fq.MaxLevel)
+    if tier and maxTier and tier >= maxTier then return true end
+    local prog, req = tonumber(fq.Progress or fq.Points or fq.TierProgress), tonumber(fq.Required or fq.RequiredPoints or fq.TierRequired)
+    if prog and req and prog >= req and (tier and maxTier and tier == maxTier) then return true end
+    -- Some profiles expose Track or Round info
+    local roundsDone, totalRounds = tonumber(fq.RoundsCompleted), tonumber(fq.TotalRounds)
+    if roundsDone and totalRounds and roundsDone >= totalRounds then return true end
+    return false
+end
+
+local function subscribeFairyStateUpdates(onChange)
+    if not DataService or not DataService.GetPathSignal then return end
+    local sig = DataService:GetPathSignal("FairyQuests/@") or DataService:GetPathSignal("Fairy/@") or DataService:GetPathSignal("FairyEvent/@")
+    if sig then
+        trackConn(sig:Connect(function()
+            if onChange then onChange() end
+        end))
+    end
+end
+
+local function checkAndRestartFairy(toast, reason)
+    if not (AUTO_FAIRY and AUTO_FAIRY.autoRestartEnabled) then return end
+    if isFairyTrackMaxedFromDS() then
+        local ok = select(1, restartFairyTrack())
+        if toast then toast(ok and ("Restarted Fairy Track" .. (reason and (" ("..reason..")") or "")) or "Restart failed") end
+    end
+end
+
+local function claimBestFairyReward(toast)
+    -- 1) Try authoritative choices first
+    local cands = getFairyChoicesFromDS()
+
+    -- 2) If DS didn’t return anything (timing/UI-first case), scrape UI as fallback
+    if #cands == 0 then
+        cands = getFairyRewardsFromUI_Grouped()
+    end
+
+    if #cands == 0 then
+        if toast then toast("No reward choices detected") end
+        return false
+    end
+
+    -- Learn names for the dropdown (so your “preferred rewards” list stays updated)
+    _mergeKnownRewardsFrom(cands)
+
+    -- Pick by preferences → heuristic
+    local pick = chooseBestReward(cands)
+    if not pick then
+        if toast then toast("No suitable reward found") end
+        return false
+    end
+
+    -- Claim via Remote if we have an id, else click the card on the UI
+    local ok = false
+    if pick.id then
+        ok = select(1, claimFairyRewardById(pick.id))
+    end
+    if (not ok) and pick.frame then
+        clickGuiCenter(pick.frame)
+        ok = true
+    end
+
+    if toast then
+        local label = pick.name or pick.id or "?"
+        if pick.qty then label = label .. " x" .. tostring(pick.qty) end
+        toast(ok and ("Claimed: " .. label) or "Claim failed")
+    end
+    -- After any claim, attempt auto-restart if the track is maxed
+    task.defer(function()
+        checkAndRestartFairy(toast, "post-claim")
+    end)
+    return ok
+end
+
+local function startAutoClaimFairy(toast)
+    if AUTO_FAIRY._claimTask then return end
+    AUTO_FAIRY.claimEnabled = true
+    if toast then toast("Auto-Claim Fairy Rewards ON") end
+
+    -- when choices update on the profile, try to claim immediately
+    subscribeFairyChoicesUpdates(function()
+        if AUTO_FAIRY.claimEnabled then
+            task.defer(function() claimBestFairyReward(toast) end)
+        end
+    end)
+
+    -- when the chooser UI pops, try again (covers UI-first race)
+    hookChooseRewardsUI(function()
+        if AUTO_FAIRY.claimEnabled then
+            task.defer(function() claimBestFairyReward(toast) end)
+        end
+    end)
+
+    -- auto-restart on state updates if maxed
+    subscribeFairyStateUpdates(function()
+        if AUTO_FAIRY.claimEnabled then
+            checkAndRestartFairy(toast, "state-change")
+        end
+    end)
+
+    -- existing PlayerGui watcher + periodic opportunistic check
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    AUTO_FAIRY._claimTask = task.spawn(function()
+        local function onDescendant(desc)
+            if not AUTO_FAIRY.claimEnabled then return end
+            local nm = string.lower(desc.Name or "")
+            local gui = desc:FindFirstAncestorWhichIsA("ScreenGui")
+            if gui and gui.Enabled ~= false then
+                if nm:find("fairy") or nm:find("reward") or nm:find("chooser") or nm:find("wish") or nm:find("quest") then
+                    task.delay(0.15, function()
+                        if AUTO_FAIRY.claimEnabled then claimBestFairyReward(toast) end
+                    end)
+                end
+            end
+        end
+
+        if pg then
+            for _,d in ipairs(pg:GetDescendants()) do onDescendant(d) end
+            local conn; conn = pg.DescendantAdded:Connect(onDescendant)
+            while AUTO_FAIRY.claimEnabled do
+                task.wait(1.5)
+                claimBestFairyReward() -- safety sweep
+                checkAndRestartFairy() -- periodic check
+            end
+            if conn then pcall(function() conn:Disconnect() end) end
+        else
+            while AUTO_FAIRY.claimEnabled do
+                claimBestFairyReward()
+                checkAndRestartFairy()
+                task.wait(3)
+            end
+        end
+    end)
+end
+
+local function stopAutoClaimFairy(toast)
+    AUTO_FAIRY.claimEnabled = false
+    if AUTO_FAIRY._claimTask then task.cancel(AUTO_FAIRY._claimTask); AUTO_FAIRY._claimTask=nil end
+    if toast then toast("Auto-Claim Fairy Rewards OFF") end
 end
 
 -- ============================== AUTO-SHOP FUNCTIONS =================================
@@ -3044,7 +3658,7 @@ local function buildApp()
     -- EVENTS PAGE -------------------------------------------------------------
     do
     local P = makePage("Events")
-    local autoFairySection = makeCollapsibleSection(P.Body, "Fairy Fountain Auto Submit", false)
+    local autoFairySection = makeCollapsibleSection(P.Body, "Fairy Event", false)
 
         -- Auto-Fairy toggle
         makeToggle(
@@ -3099,6 +3713,219 @@ local function buildApp()
             else
                 toast("No glimmering plants in backpack")
             end
+        end)
+
+        -- Auto-Restart toggle (merged under Fairy Event)
+        makeToggle(autoFairySection, "Auto-Restart Track", "When maxed, calls RestartFairyTrack", AUTO_FAIRY.autoRestartEnabled or false, function(on)
+            AUTO_FAIRY.autoRestartEnabled = on
+            if on then checkAndRestartFairy(toast, "toggle-on") end
+        end, toast)
+
+    -- FAIRY WISH (merged into Fairy Event section)
+    local wishSection = autoFairySection
+    makeToggle(wishSection, "Auto Make a Wish", "Fires FairyService.MakeFairyWish every 5s", AUTO_FAIRY.wishEnabled, function(on)
+            if on then startAutoWish(toast) else stopAutoWish(toast) end
+        end, toast)
+
+        -- Debug: scan for wish buttons
+        local rowWishDebug = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},wishSection)
+        corner(rowWishDebug,8); stroke(rowWishDebug,1,THEME.BORDER); pad(rowWishDebug,6,6,6,6)
+        local btnWishDebug = mk("TextButton",{Text="Scan for Wish Buttons (debug)",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowWishDebug)
+        corner(btnWishDebug,8); stroke(btnWishDebug,1,THEME.BORDER); hover(btnWishDebug,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnWishDebug.MouseButton1Click:Connect(function()
+            local buttons = dumpWishButtons()
+            toast("Found " .. #buttons .. " buttons. See Output/WishButtonsDump.txt")
+        end)
+
+        -- Manual wish test button
+        local rowWishTest = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},wishSection)
+        corner(rowWishTest,8); stroke(rowWishTest,1,THEME.BORDER); pad(rowWishTest,6,6,6,6)
+        local btnWishTest = mk("TextButton",{Text="Make Wish Now",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowWishTest)
+        corner(btnWishTest,8); stroke(btnWishTest,1,THEME.BORDER); hover(btnWishTest,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnWishTest.MouseButton1Click:Connect(function()
+            local success = makeFairyWish()
+            toast(success and "Wish sent successfully!" or "Failed to send wish")
+        end)
+
+    -- FAIRY REWARD CLAIM (merged into Fairy Event section)
+    local claimSection = autoFairySection
+        -- Rewards selection dropdown
+    -- Seed catalog from game data so the list isn't empty on first run
+    if #AUTO_FAIRY.knownRewards == 0 then _seedKnownRewardsFromData() end
+        local listContainer = mk("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -20, 0, 40), Position = UDim2.new(0, 10, 0, 0)}, claimSection)
+        local listBtn = mk("TextButton", {BackgroundColor3 = THEME.BG2, BorderSizePixel = 0, Size = UDim2.new(1,0,1,0), Text = "Select Preferred Rewards ▼", TextColor3 = THEME.TEXT, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13}, listContainer)
+        corner(listBtn,8); stroke(listBtn,1,THEME.BORDER); pad(listBtn,0,0,0,15)
+        local listFrame = mk("ScrollingFrame", {BackgroundColor3 = THEME.BG1, BorderSizePixel = 0, Size = UDim2.new(1,-20,0,200), Position = UDim2.new(0,10,0,44), Visible=false, CanvasSize = UDim2.new(0,0,0,0), ScrollBarThickness=8}, claimSection)
+        listFrame.ClipsDescendants=true; corner(listFrame,8); stroke(listFrame,1,THEME.BORDER)
+        
+        -- Lift and activate the dropdown
+        listBtn.ZIndex   = 40
+        listFrame.ZIndex = 50
+        listFrame.Active = true  -- capture input so clicks don't fall through
+
+        -- Fullscreen scrim to catch outside clicks
+        local screenGui = CoreGui:FindFirstChild("SpeedStyleUI")
+            or listFrame:FindFirstAncestorOfClass("ScreenGui")
+        local scrim = Instance.new("TextButton")
+        scrim.Name = "DropdownScrim"
+        scrim.BackgroundTransparency = 1
+        scrim.Text = ""
+        scrim.AutoButtonColor = false
+        scrim.Size = UDim2.fromScale(1, 1)
+        scrim.Visible = false
+        scrim.ZIndex = listFrame.ZIndex - 1  -- sits behind dropdown, above everything else
+        scrim.Parent = screenGui
+
+        -- Keep a small 'inside click' window to avoid races with the outside-closer
+        local lastInsideClick = 0
+        listFrame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                lastInsideClick = os.clock()
+            end
+        end)
+        
+        local listLayout = vlist(listFrame,3)
+
+        local function updateListBtnText()
+            local n = #AUTO_FAIRY.selectedRewards
+            if n == 0 then
+                listBtn.Text = "Select Preferred Rewards ▼"
+            elseif n == 1 then
+                listBtn.Text = AUTO_FAIRY.selectedRewards[1].name .. " ▼"
+            else
+                local names = {}
+                for i = 1, math.min(n, 3) do names[i] = AUTO_FAIRY.selectedRewards[i].name end
+                listBtn.Text = table.concat(names, ", ")
+                    .. (n > 3 and (" +" .. (n-3) .. " more ▼") or " ▼")
+            end
+        end
+
+        local function refreshRewardsList()
+            -- Build list items from AUTO_FAIRY.knownRewards
+            for _, ch in ipairs(listFrame:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+            for i, entry in ipairs(AUTO_FAIRY.knownRewards) do
+                local z = listFrame.ZIndex
+                local row = mk("Frame", {
+                    BackgroundColor3 = THEME.BG2,
+                    BorderSizePixel  = 0,
+                    Size             = UDim2.new(1,-16,0,32),
+                    ZIndex           = z + 1,
+                    Active           = true,           -- ensures row gets InputBegan reliably
+                }, listFrame)
+                corner(row,6)
+
+                local checkbox = mk("TextButton", {
+                    BackgroundColor3 = entry.selected and Color3.fromRGB(0,150,0) or THEME.BG3,
+                    Size             = UDim2.new(0,24,0,24),
+                    Position         = UDim2.new(0,8,0.5,-12),
+                    Text             = "",
+                    BorderSizePixel  = 0,
+                    ZIndex           = z + 2,
+                }, row)
+                corner(checkbox,4); stroke(checkbox,1,THEME.BORDER)
+
+                local checkmark = mk("TextLabel", {
+                    BackgroundTransparency = 1,
+                    Size        = UDim2.new(1,0,1,0),
+                    Text        = "✓",
+                    TextColor3  = Color3.new(1,1,1),
+                    TextScaled  = true,
+                    Font        = Enum.Font.GothamBold,
+                    Visible     = entry.selected or false,
+                    ZIndex      = z + 3,
+                }, checkbox)
+
+                local label = mk("TextLabel", {
+                    BackgroundTransparency = 1,
+                    Size        = UDim2.new(1,-40,1,0),
+                    Position    = UDim2.new(0,40,0,0),
+                    Text        = entry.name,
+                    TextColor3  = THEME.TEXT,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    Font        = Enum.Font.Gotham,
+                    TextSize    = 13,
+                    ZIndex      = z + 2,
+                }, row)
+
+                local function toggle()
+                    entry.selected = not (entry.selected or false)
+                    checkbox.BackgroundColor3 = entry.selected and Color3.fromRGB(0,150,0) or THEME.BG3
+                    checkmark.Visible = entry.selected
+                    _updatePreferredFromSelections()
+                    updateListBtnText()   -- reflect selection right away
+                end
+                checkbox.MouseButton1Click:Connect(toggle)
+                row.InputBegan:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 then toggle() end end)
+                row.MouseEnter:Connect(function() if not entry.selected then row.BackgroundColor3 = THEME.BG3 end end)
+                row.MouseLeave:Connect(function() if not entry.selected then row.BackgroundColor3 = THEME.BG2 end end)
+            end
+            listFrame.CanvasSize = UDim2.new(0,0,0,(#AUTO_FAIRY.knownRewards)*35+10)
+            -- Update button label
+            updateListBtnText()
+        end
+
+        -- Open/close handler: show/hide scrim together with the list
+        listBtn.MouseButton1Click:Connect(function()
+            if #AUTO_FAIRY.knownRewards == 0 then _seedKnownRewardsFromData() end
+            local open = not listFrame.Visible
+            listFrame.Visible = open
+            scrim.Visible = open
+            -- flip the arrow
+            listBtn.Text = listBtn.Text:gsub("▼", open and "▲" or "▼")
+            listBtn.Text = listBtn.Text:gsub("▲", open and "▲" or "▼")
+            if open then refreshRewardsList() end
+        end)
+
+        -- Clicking the scrim (anywhere outside the dropdown) closes it
+        scrim.MouseButton1Click:Connect(function()
+            listFrame.Visible = false
+            scrim.Visible = false
+        end)
+
+        -- Optional safety: if you keep a global UserInputService outside-closer, guard it:
+        UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if not listFrame.Visible then return end
+            -- if the click just happened inside the list, ignore the outside-closer
+            if os.clock() - lastInsideClick < 0.15 then return end
+            -- otherwise let your existing bounds check run (or simply rely on the scrim)
+        end)
+
+        makeToggle(claimSection, "Auto-Claim Rewards", "Chooses preferred reward; else best by rarity/amount", AUTO_FAIRY.claimEnabled, function(on)
+            if on then startAutoClaimFairy(toast) else stopAutoClaimFairy(toast) end
+        end, toast)
+
+    local rowClaimNow = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},claimSection)
+        corner(rowClaimNow,8); stroke(rowClaimNow,1,THEME.BORDER); pad(rowClaimNow,6,6,6,6)
+        local btnClaimNow = mk("TextButton",{Text="Claim Best Now",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClaimNow)
+        corner(btnClaimNow,8); stroke(btnClaimNow,1,THEME.BORDER); hover(btnClaimNow,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnClaimNow.MouseButton1Click:Connect(function()
+            claimBestFairyReward(toast)
+        end)
+
+        -- Debug: dump the live chooser to console/file to see names and UUIDs
+    local rowScan = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},claimSection)
+        corner(rowScan,8); stroke(rowScan,1,THEME.BORDER); pad(rowScan,6,6,6,6)
+        local btnScan = mk("TextButton",{Text="Scan Current Chooser (debug)",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowScan)
+        corner(btnScan,8); stroke(btnScan,1,THEME.BORDER); hover(btnScan,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnScan.MouseButton1Click:Connect(function()
+            local cands = dumpFairyChooser()
+            if #cands>0 then
+                _mergeKnownRewardsFrom(cands)
+                _updatePreferredFromSelections()
+                toast("Chooser scanned ("..#cands.." found). See Output.")
+            else
+                toast("No chooser detected. Open it, then click again.")
+            end
+        end)
+
+        -- Manual Restart button (merged)
+        local rowRestart = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},autoFairySection)
+        corner(rowRestart,8); stroke(rowRestart,1,THEME.BORDER); pad(rowRestart,6,6,6,6)
+        local btnRestartNow = mk("TextButton",{Text="Restart Track Now",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowRestart)
+        corner(btnRestartNow,8); stroke(btnRestartNow,1,THEME.BORDER); hover(btnRestartNow,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnRestartNow.MouseButton1Click:Connect(function()
+            local ok = select(1, restartFairyTrack()); toast(ok and "Restarted Fairy Track" or "Restart failed")
         end)
     end
 
