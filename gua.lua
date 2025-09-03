@@ -159,6 +159,33 @@ local MUTATION = {
     lastText = ""
 }
 
+-- Parse user-entered mutations (comma/space/newline separated) into MUTATION.set
+local function setMutationFilterFromText(text)
+    MUTATION.set = {}
+    if typeof(text) ~= "string" then text = "" end
+    MUTATION.lastText = text
+
+    -- Normalize separators to spaces, strip quotes/backticks/brackets
+    local norm = text
+        :gsub("[,;|\n\t]", " ")
+        :gsub("[\"'`%[%]%(%)]", "")
+        :lower()
+
+    for token in norm:gmatch("%S+") do
+        -- Ignore trivial tokens
+        if #token > 1 then
+            MUTATION.set[token] = true
+        end
+    end
+
+    if DEBUG_MODE then
+        local keys = {}
+        for k,_ in pairs(MUTATION.set) do table.insert(keys, k) end
+        table.sort(keys)
+        print("[MUTATION] Updated filter:", next(MUTATION.set) and table.concat(keys, ", ") or "<empty>")
+    end
+end
+
 -- Replace your existing getPlantVariantName with this:
 local function getPlantVariantName(model)
     -- 1) String attributes commonly used by games
@@ -981,6 +1008,25 @@ local AUTO_GEAR = {
     _inFlightGlobal = 0
 }
 
+-- ============================== AUTO-EGG ==================================
+local AUTO_EGG = {
+    enabled = false,
+    _task = nil,
+    _busy = false,
+    checkInterval = 10,
+    availableEggs = {},
+    selectedEggs = {},
+    buyAll = false,
+    modeSelected = false,
+    modeAll = false,
+    buyDelay = 0.05,
+    maxSpamPerItem = 120,
+    maxConcurrent = 12,
+    maxConcurrentGlobal = 36,
+    logBuys = false,
+    _inFlightGlobal = 0
+}
+
 -- Function to get list of glimmering plants in backpack (for tracking)
 local function getGlimmeringPlantNames()
     local glimmeringPlants = {}
@@ -1480,6 +1526,177 @@ local function stopAutoGear(toast)
     AUTO_GEAR.enabled = false; AUTO_GEAR._busy = false
     if AUTO_GEAR._task then task.cancel(AUTO_GEAR._task); AUTO_GEAR._task=nil end
     if toast then toast("Auto-Gear OFF") end
+end
+
+-- ============================== AUTO-EGG FUNCTIONS ================================
+
+-- FireServer to buy a pet egg via exact remote: GameEvents.BuyPetEgg(eggName)
+local function buyEgg(eggName)
+    while AUTO_EGG._inFlightGlobal >= (AUTO_EGG.maxConcurrentGlobal or 36) and AUTO_EGG.enabled do
+        task.wait(AUTO_EGG.buyDelay or 0.05)
+    end
+    AUTO_EGG._inFlightGlobal += 1
+    local ok = pcall(function()
+        local ge = ReplicatedStorage:WaitForChild("GameEvents")
+        ge:WaitForChild("BuyPetEgg"):FireServer(eggName)
+    end)
+    AUTO_EGG._inFlightGlobal = math.max(0, AUTO_EGG._inFlightGlobal - 1)
+    if AUTO_EGG.logBuys then
+        local line = (ok and "Bought" or "Failed") .. " Egg " .. tostring(eggName)
+        pcall(writefile, "EggShopDebug.txt", "\n[" .. os.date("%X") .. "] " .. line)
+    end
+    return ok
+end
+
+-- Build egg list from PetEggData (no DisplayInShop flag; include all)
+local function _loadEggData()
+    AUTO_EGG.availableEggs = {}
+    local sources = {}
+    local rs = ReplicatedStorage
+    local dataFolder = rs:FindFirstChild("Data")
+    local modulesFolder = rs:FindFirstChild("Modules")
+    if dataFolder then table.insert(sources, dataFolder:FindFirstChild("PetEggData")) end
+    if modulesFolder then table.insert(sources, modulesFolder:FindFirstChild("PetEggData")) end
+    table.insert(sources, rs:FindFirstChild("PetEggData"))
+
+    local eggData
+    for _, mod in ipairs(sources) do
+        if mod and mod:IsA("ModuleScript") then
+            local ok, res = pcall(function() return require(mod) end)
+            if ok and type(res) == "table" then eggData = res; break end
+        end
+    end
+
+    if type(eggData) == "table" then
+        local idx = 0
+        for k, info in pairs(eggData) do
+            idx += 1
+            local name = (type(info) == "table" and (info.EggName or info.Name)) or (typeof(k) == "string" and k) or (typeof(k) == "number" and tostring(k)) or ("Egg "..idx)
+            local price = (type(info) == "table" and (info.Price or info.Cost or info.CoinCost)) or 0
+            local layout = (type(info) == "table" and info.LayoutOrder) or idx
+            if name and #tostring(name) > 0 then
+                table.insert(AUTO_EGG.availableEggs, {
+                    key = name,
+                    name = name,
+                    price = tonumber(price) or 0,
+                    layoutOrder = layout or 999,
+                    displayName = name,
+                    selected = false
+                })
+            end
+        end
+        table.sort(AUTO_EGG.availableEggs, function(a,b)
+            if a.layoutOrder == b.layoutOrder then return a.name < b.name else return a.layoutOrder < b.layoutOrder end
+        end)
+    else
+        -- Fallback basic list
+        local defaults = {"Common Egg","Uncommon Egg","Rare Egg","Epic Egg","Legendary Egg"}
+        for i, nm in ipairs(defaults) do
+            table.insert(AUTO_EGG.availableEggs, {key=nm, name=nm, price=0, layoutOrder=i, displayName=nm, selected=false})
+        end
+    end
+    return AUTO_EGG.availableEggs
+end
+
+-- Money-delta based loop for eggs (no stock; stop on repeated no-spend)
+local function _buyEggUntilNoSpend(eggName, price)
+    local moneyVal = _getCurrencyValueInstance and _getCurrencyValueInstance() or nil
+    local getMoney = function() return (moneyVal and moneyVal.Value) or 0 end
+    local attempts, bought, failsInRow = 0, 0, 0
+    local delay = AUTO_EGG.buyDelay or 0.05
+    local cap = AUTO_EGG.maxSpamPerItem or 120
+    while AUTO_EGG.enabled and attempts < cap do
+        attempts += 1
+        local before = getMoney()
+        buyEgg(eggName)
+        task.wait(delay)
+        local after = getMoney()
+        local delta = before - after
+        if price and price > 0 and delta >= price * 0.9 then
+            bought += 1
+            failsInRow = 0
+        else
+            failsInRow += 1
+            if failsInRow >= 4 then break end
+            task.wait(math.min(0.25 * failsInRow, 1.0))
+        end
+    end
+    return bought
+end
+
+local function _burstBuyEgg(eggName, count)
+    local inFlight = 0
+    local maxC = math.max(1, AUTO_EGG.maxConcurrent or 8)
+    local delay = AUTO_EGG.buyDelay or 0.05
+    local i = 0
+    while AUTO_EGG.enabled and i < count do
+        while inFlight < maxC and i < count do
+            i += 1
+            inFlight += 1
+            task.spawn(function()
+                buyEgg(eggName)
+                task.wait(delay)
+                inFlight -= 1
+            end)
+        end
+        task.wait(delay)
+    end
+    while inFlight > 0 do task.wait(delay) end
+end
+
+local function _runForEggsParallel(items, fn)
+    local pending = 0
+    local delay = AUTO_EGG.buyDelay or 0.05
+    for _, it in ipairs(items) do
+        if not AUTO_EGG.enabled then break end
+        while AUTO_EGG._inFlightGlobal >= (AUTO_EGG.maxConcurrentGlobal or 36) and AUTO_EGG.enabled do
+            task.wait(delay)
+        end
+        pending += 1
+        task.spawn(function()
+            pcall(fn, it)
+            pending -= 1
+        end)
+        task.wait(delay * 0.2)
+    end
+    while pending > 0 do task.wait(delay) end
+end
+
+local function startAutoEgg(toast)
+    if AUTO_EGG.enabled then return end
+    AUTO_EGG.enabled = true
+    if toast then toast("Auto-Egg ON - buying eggs continuously") end
+    if #AUTO_EGG.availableEggs == 0 then _loadEggData() end
+    AUTO_EGG._task = task.spawn(function()
+        while AUTO_EGG.enabled do
+            if not AUTO_EGG._busy then
+                AUTO_EGG._busy = true
+                local itemsToBuy = AUTO_EGG.buyAll and AUTO_EGG.availableEggs or AUTO_EGG.selectedEggs
+                if #itemsToBuy > 0 then
+                    _runForEggsParallel(itemsToBuy, function(it)
+                        if not AUTO_EGG.enabled then return end
+                        local key = it.key or it.name or it.displayName; if not key then return end
+                        if it.price and it.price > 0 then
+                            _burstBuyEgg(key, (AUTO_EGG.maxConcurrent or 12) * 6)
+                            _buyEggUntilNoSpend(key, it.price)
+                        else
+                            _burstBuyEgg(key, math.min(AUTO_EGG.maxSpamPerItem or 120, 60))
+                        end
+                    end)
+                end
+                AUTO_EGG._busy = false
+            end
+            local waitS = math.max(1, AUTO_EGG.checkInterval or 10)
+            local t0 = os.clock()
+            while AUTO_EGG.enabled and (os.clock() - t0) < waitS do task.wait(0.25) end
+        end
+    end)
+end
+
+local function stopAutoEgg(toast)
+    AUTO_EGG.enabled = false; AUTO_EGG._busy = false
+    if AUTO_EGG._task then task.cancel(AUTO_EGG._task); AUTO_EGG._task=nil end
+    if toast then toast("Auto-Egg OFF") end
 end
 
 -- UI stock helpers (shop scanning via PlayerGui)
@@ -2890,6 +3107,7 @@ local function buildApp()
     local P = makePage("Shops")
     local seedShopSection = makeCollapsibleSection(P.Body, "Seed Shop Auto Buy", false)
     local gearShopSection = makeCollapsibleSection(P.Body, "Gear Shop Auto Buy", false)
+    local eggShopSection  = makeCollapsibleSection(P.Body, "Egg Shop Auto Buy", false)
 
         -- Function to scan for available seeds in the shop
         local function getAvailableSeeds()
@@ -3482,6 +3700,188 @@ local function buildApp()
     end)
 
     createGearList()
+
+    -- =================== Egg Shop =====================
+    local function getAvailableEggs()
+        _loadEggData()
+        return AUTO_EGG.availableEggs
+    end
+
+    getAvailableEggs()
+
+    local eggHeader = Instance.new("TextLabel")
+    eggHeader.Parent = eggShopSection
+    eggHeader.BackgroundTransparency = 1
+    eggHeader.Size = UDim2.new(1, -20, 0, 24)
+    eggHeader.Position = UDim2.new(0, 10, 0, 50)
+    eggHeader.Text = "Select Eggs"
+    eggHeader.TextColor3 = THEME.TEXT
+    eggHeader.TextXAlignment = Enum.TextXAlignment.Left
+    eggHeader.Font = Enum.Font.GothamBold
+    eggHeader.TextSize = 14
+
+    local eggAutoSelectedTgl, eggAutoAllTgl
+    eggAutoSelectedTgl = makeToggle(
+        eggShopSection,
+        "Auto Buy Selected Eggs",
+        "Continuously buys the eggs you select below",
+        AUTO_EGG.enabled,
+        function(on)
+            AUTO_EGG.modeSelected = on and true or false
+            if on then
+                if AUTO_EGG.buyAll then
+                    AUTO_EGG.buyAll = false; AUTO_EGG.modeAll = false
+                    if eggAutoAllTgl and eggAutoAllTgl.Set then eggAutoAllTgl.Set(false) end
+                end
+                if #AUTO_EGG.selectedEggs > 0 then
+                    if not AUTO_EGG.enabled then startAutoEgg(toast) end
+                else
+                    toast("Please select at least one egg first!")
+                    AUTO_EGG.modeSelected = false
+                    eggAutoSelectedTgl.Set(false)
+                    if AUTO_EGG.enabled and not AUTO_EGG.modeAll then stopAutoEgg(toast) end
+                end
+            else
+                if AUTO_EGG.enabled and not AUTO_EGG.modeAll then stopAutoEgg(toast) end
+            end
+        end,
+        toast
+    )
+    eggAutoSelectedTgl.Instance.Position = UDim2.new(0, 10, 0, 82)
+    eggAutoSelectedTgl.Instance.Size = UDim2.new(1, -20, 0, 46)
+
+    eggAutoAllTgl = makeToggle(
+        eggShopSection,
+        "Auto Buy All Eggs",
+        "Continuously buys every egg",
+        AUTO_EGG.buyAll,
+        function(on)
+            AUTO_EGG.buyAll = on and true or false
+            AUTO_EGG.modeAll = AUTO_EGG.buyAll
+            if AUTO_EGG.buyAll and AUTO_EGG.modeSelected then
+                toast("Auto Buy Selected (Eggs) turned OFF (using All mode)")
+                AUTO_EGG.modeSelected = false
+                eggAutoSelectedTgl.Set(false)
+            end
+            if on and not AUTO_EGG.enabled then
+                if #AUTO_EGG.availableEggs == 0 then getAvailableEggs() end
+                startAutoEgg(toast)
+            elseif (not on) and AUTO_EGG.enabled and (not AUTO_EGG.modeSelected) then
+                stopAutoEgg(toast)
+            end
+        end,
+        toast
+    )
+    eggAutoAllTgl.Instance.Position = UDim2.new(0, 10, 0, 132)
+    eggAutoAllTgl.Instance.Size = UDim2.new(1, -20, 0, 46)
+
+    local eggDropdownContainer = Instance.new("Frame")
+    eggDropdownContainer.Parent = eggShopSection
+    eggDropdownContainer.BackgroundTransparency = 1
+    eggDropdownContainer.Size = UDim2.new(1, -20, 0, 40)
+    eggDropdownContainer.Position = UDim2.new(0, 10, 0, 184)
+
+    local eggDropdownButton = Instance.new("TextButton")
+    eggDropdownButton.Parent = eggDropdownContainer
+    eggDropdownButton.BackgroundColor3 = THEME.BG2
+    eggDropdownButton.BorderSizePixel = 0
+    eggDropdownButton.Size = UDim2.new(1, 0, 1, 0)
+    eggDropdownButton.Text = "Select Eggs ▼"
+    eggDropdownButton.TextColor3 = THEME.TEXT
+    eggDropdownButton.TextXAlignment = Enum.TextXAlignment.Left
+    eggDropdownButton.Font = Enum.Font.Gotham
+    eggDropdownButton.TextSize = 13
+    corner(eggDropdownButton, 8)
+    stroke(eggDropdownButton, 1, THEME.BORDER)
+    pad(eggDropdownButton, 0, 0, 0, 15)
+
+    local eggListFrame = Instance.new("ScrollingFrame")
+    eggListFrame.Parent = eggShopSection
+    eggListFrame.BackgroundColor3 = THEME.BG1
+    eggListFrame.BorderSizePixel = 0
+    eggListFrame.Size = UDim2.new(1, -20, 0, 200)
+    eggListFrame.Position = UDim2.new(0, 10, 0, 229)
+    eggListFrame.Visible = false
+    eggListFrame.CanvasSize = UDim2.new(0, 0, 0, #AUTO_EGG.availableEggs * 35 + 10)
+    eggListFrame.ScrollBarThickness = 8
+    eggListFrame.ClipsDescendants = true
+    corner(eggListFrame, 8); stroke(eggListFrame, 1, THEME.BORDER)
+    local eggListLayout = Instance.new("UIListLayout"); eggListLayout.Parent = eggListFrame; eggListLayout.Padding = UDim.new(0, 3); eggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local function updateEggDropdownText()
+        local n = #AUTO_EGG.selectedEggs
+        if n == 0 then eggDropdownButton.Text = "Select Eggs ▼"
+        elseif n == 1 then eggDropdownButton.Text = (AUTO_EGG.selectedEggs[1].displayName or AUTO_EGG.selectedEggs[1].name) .. " ▼"
+        else
+            local names = {}
+            for i=1, math.min(n,3) do table.insert(names, AUTO_EGG.selectedEggs[i].displayName or AUTO_EGG.selectedEggs[i].name) end
+            eggDropdownButton.Text = table.concat(names, ", ") .. (n>3 and (" +"..(n-3).." more ▼") or " ▼")
+        end
+    end
+
+    local function createEggList()
+        for _, ch in ipairs(eggListFrame:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+
+        -- All row
+        do
+            local allRow = Instance.new("Frame"); allRow.Parent = eggListFrame; allRow.BackgroundColor3 = THEME.BG2; allRow.BorderSizePixel = 0; allRow.Size = UDim2.new(1, -16, 0, 32); allRow.LayoutOrder = 0; corner(allRow, 6)
+            local btn = Instance.new("TextButton"); btn.Parent = allRow; btn.BackgroundTransparency = 1; btn.Size = UDim2.new(1,0,1,0); btn.Text = "All"; btn.TextColor3 = THEME.TEXT; btn.Font = Enum.Font.Gotham; btn.TextSize = 13
+            btn.MouseButton1Click:Connect(function()
+                local allSelected = true; for _, it in ipairs(AUTO_EGG.availableEggs) do if not it.selected then allSelected=false break end end
+                AUTO_EGG.selectedEggs = {}
+                if allSelected then
+                    for _, it in ipairs(AUTO_EGG.availableEggs) do it.selected=false end
+                    toast("Cleared all egg selections")
+                else
+                    for _, it in ipairs(AUTO_EGG.availableEggs) do it.selected=true; table.insert(AUTO_EGG.selectedEggs, it) end
+                    toast("Selected all "..#AUTO_EGG.availableEggs.." eggs!")
+                end
+                createEggList(); updateEggDropdownText()
+            end)
+            allRow.MouseEnter:Connect(function() allRow.BackgroundColor3 = THEME.BG3 end)
+            allRow.MouseLeave:Connect(function() allRow.BackgroundColor3 = THEME.BG2 end)
+        end
+
+        for i, it in ipairs(AUTO_EGG.availableEggs) do
+            local row = Instance.new("Frame"); row.Parent = eggListFrame; row.BackgroundColor3 = THEME.BG2; row.BorderSizePixel = 0; row.Size = UDim2.new(1, -16, 0, 32); row.LayoutOrder = i + 1; corner(row, 6)
+            local checkbox = Instance.new("TextButton"); checkbox.Parent=row; checkbox.BackgroundColor3 = it.selected and Color3.fromRGB(0,150,0) or THEME.BG3; checkbox.Size = UDim2.new(0,24,0,24); checkbox.Position = UDim2.new(0,8,0.5,-12); checkbox.Text=""; checkbox.BorderSizePixel=0; corner(checkbox,4); stroke(checkbox,1,THEME.BORDER)
+            local checkmark = Instance.new("TextLabel"); checkmark.Parent=checkbox; checkmark.BackgroundTransparency=1; checkmark.Size=UDim2.new(1,0,1,0); checkmark.Text="✓"; checkmark.TextColor3=Color3.new(1,1,1); checkmark.TextScaled=true; checkmark.Font=Enum.Font.GothamBold; checkmark.Visible = it.selected or false
+            local label = Instance.new("TextLabel"); label.Parent=row; label.BackgroundTransparency=1; label.Size=UDim2.new(1,-40,1,0); label.Position=UDim2.new(0,40,0,0); label.Text=(it.displayName or it.name) .. ((it.price and it.price>0) and (" - "..it.price.."¢") or ""); label.TextColor3=THEME.TEXT; label.TextXAlignment=Enum.TextXAlignment.Left; label.Font=Enum.Font.Gotham; label.TextSize=13
+            local function toggle()
+                it.selected = not (it.selected or false); checkbox.BackgroundColor3 = it.selected and Color3.fromRGB(0,150,0) or THEME.BG3; checkmark.Visible = it.selected
+                AUTO_EGG.selectedEggs = {}; for _, g in ipairs(AUTO_EGG.availableEggs) do if g.selected then table.insert(AUTO_EGG.selectedEggs, g) end end
+                updateEggDropdownText()
+            end
+            checkbox.MouseButton1Click:Connect(toggle)
+            row.InputBegan:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 then toggle() end end)
+            row.MouseEnter:Connect(function() if not it.selected then row.BackgroundColor3 = THEME.BG3 end end)
+            row.MouseLeave:Connect(function() if not it.selected then row.BackgroundColor3 = THEME.BG2 end end)
+        end
+        eggListFrame.CanvasSize = UDim2.new(0,0,0,(#AUTO_EGG.availableEggs+1)*35+10)
+        updateEggDropdownText()
+    end
+
+    eggDropdownButton.MouseButton1Click:Connect(function()
+        eggListFrame.Visible = not eggListFrame.Visible
+        local isOpen = eggListFrame.Visible
+        eggDropdownButton.Text = eggDropdownButton.Text:gsub("▼", isOpen and "▲" or "▼")
+        eggDropdownButton.Text = eggDropdownButton.Text:gsub("▲", isOpen and "▲" or "▼")
+    end)
+
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if eggListFrame.Visible then
+                local mousePos = UserInputService:GetMouseLocation()
+                local btnPos, btnSize = eggDropdownButton.AbsolutePosition, eggDropdownButton.AbsoluteSize
+                local listPos, listSize = eggListFrame.AbsolutePosition, eggListFrame.AbsoluteSize
+                local outsideBtn = mousePos.X < btnPos.X or mousePos.X > btnPos.X + btnSize.X or mousePos.Y < btnPos.Y or mousePos.Y > btnPos.Y + btnSize.Y
+                local outsideList = mousePos.X < listPos.X or mousePos.X > listPos.X + listSize.X or mousePos.Y < listPos.Y or mousePos.Y > listPos.Y + listSize.Y
+                if outsideBtn and outsideList then eggListFrame.Visible = false; updateEggDropdownText() end
+            end
+        end
+    end)
+
+    createEggList()
     end
 
     addSide("Main","Main")
@@ -3557,8 +3957,10 @@ local function buildApp()
             end
         end
         if AUTO_FAIRY.enabled then stopAutoFairy() print("DEBUG: Auto-fairy stopped") end
-        -- Auto-shop
-        if AUTO_SHOP.enabled then stopAutoShop() print("DEBUG: Auto-shop stopped") end
+    -- Auto-shop
+    if AUTO_SHOP.enabled then stopAutoShop() print("DEBUG: Auto-shop stopped") end
+    if AUTO_GEAR and AUTO_GEAR.enabled then stopAutoGear() print("DEBUG: Auto-gear stopped") end
+    if AUTO_EGG and AUTO_EGG.enabled then stopAutoEgg() print("DEBUG: Auto-egg stopped") end
         -- World visuals
         if GO.Enabled then GO_Stop() print("DEBUG: Grass overlay stopped") end
         beachCleanup()
