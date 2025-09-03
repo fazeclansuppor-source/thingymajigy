@@ -30,7 +30,6 @@ local FARM_MON = { running = true, thread = nil }
 -- Debug mode variable (defined early)
 local DEBUG_MODE = false  -- default off for performance; toggle via UI if needed
 
--- Initialize farm cache in background
 FARM_MON.thread = task.spawn(function()
     local function findPlayerFarm()
         print("DEBUG: Searching for farm belonging to:", CACHE.playerName)
@@ -670,7 +669,6 @@ local function harvestViaCropsRemote(toast)
     return true, sent
 end
 
--- ============================== AUTO-HARVEST =================================
 local AUTO = {
     enabled    = false,
     method     = "Wireless",   -- "None" | "Wireless" | "CFraming"
@@ -970,16 +968,21 @@ local AUTO_FAIRY = {
     _wishTask = nil,
     _wishBusy = false,
     lastWishAt = 0,
+    -- Wish UI watcher ("out of wishes" -> restart)
+    _wishMsgConn = nil,
+    _wishMsgDescConns = {},
     -- Rewards
     claimEnabled = false,
     preferredText = "",  -- comma/space separated keywords
     preferredSet = {},    -- parsed lowercased tokens
+    preferredNames = {},  -- normalized full-name matches from selection
     _claimTask = nil,
     _claimBusy = false,
     -- Reward catalog for user selection (discovered dynamically)
     knownRewards = {},     -- array of {name=string, selected=bool}
     selectedRewards = {},  -- array of refs from knownRewards where selected=true
     autoRestartEnabled = false,
+    _restartTask = nil,
 }
 
 -- ============================== AUTO-SHOP =================================
@@ -1252,11 +1255,68 @@ local function startAutoWish(toast)
     if AUTO_FAIRY._wishTask then return end
     AUTO_FAIRY.wishEnabled = true
     if toast then toast("Auto Make-a-Wish ON (every 5s)") end
+    -- also begin watching for "out of wishes" messages in the UI
+    local function isOutOfWishesText(txt)
+        local s = string.lower(tostring(txt or ""))
+        if #s == 0 then return false end
+        -- common phrasings
+        return s:find("out of wishes", 1, true)
+            or (s:find("no", 1, true) and s:find("wish", 1, true))
+            or (s:find("wishes", 1, true) and s:find("left", 1, true) and (s:find("0") or s:find("zero")))
+            or s:find("get more wishes", 1, true)
+    end
+
+    local function stopWishMsgWatcher()
+        if AUTO_FAIRY._wishMsgConn then pcall(function() AUTO_FAIRY._wishMsgConn:Disconnect() end); AUTO_FAIRY._wishMsgConn=nil end
+        for _,c in ipairs(AUTO_FAIRY._wishMsgDescConns) do pcall(function() c:Disconnect() end) end
+        AUTO_FAIRY._wishMsgDescConns = {}
+    end
+
+    local function startWishMsgWatcher()
+        stopWishMsgWatcher()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if not pg then return end
+
+        local function hookGui(gui)
+            if not gui:IsA("ScreenGui") then return end
+            -- existing descendants
+            for _,d in ipairs(gui:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextButton") then
+                    -- initial scan
+                    if isOutOfWishesText(d.Text) and AUTO_FAIRY.autoRestartEnabled then
+                        task.defer(function()
+                            local ok = select(1, restartFairyTrack())
+                            if toast then toast(ok and "Restarted Fairy Track (out of wishes)" or "Restart failed") end
+                        end)
+                    end
+                    -- watch text changes
+                    local pc = d:GetPropertyChangedSignal("Text"):Connect(function()
+                        if isOutOfWishesText(d.Text) and AUTO_FAIRY.autoRestartEnabled then
+                            task.defer(function()
+                                local ok = select(1, restartFairyTrack())
+                                if toast then toast(ok and "Restarted Fairy Track (out of wishes)" or "Restart failed") end
+                            end)
+                        end
+                    end)
+                    table.insert(AUTO_FAIRY._wishMsgDescConns, pc)
+                end
+            end
+        end
+
+        for _,gui in ipairs(pg:GetChildren()) do hookGui(gui) end
+        AUTO_FAIRY._wishMsgConn = pg.ChildAdded:Connect(function(gui)
+            hookGui(gui)
+        end)
+    end
+
+    startWishMsgWatcher()
     AUTO_FAIRY._wishTask = task.spawn(function()
         while AUTO_FAIRY.wishEnabled do
             makeFairyWish()
             task.wait(5)
         end
+        -- cleanup watcher when the loop ends
+        stopWishMsgWatcher()
     end)
 end
 
@@ -1527,11 +1587,18 @@ end
 local function _updatePreferredFromSelections()
     AUTO_FAIRY.selectedRewards = {}
     AUTO_FAIRY.preferredSet = {}
+    AUTO_FAIRY.preferredNames = {}
+    local function norm(s)
+        s = tostring(s or ""):lower():gsub("%s+"," "):gsub("^%s+"," "):gsub("%s+$","")
+        return s
+    end
     for _, entry in ipairs(AUTO_FAIRY.knownRewards) do
         if entry.selected then
             table.insert(AUTO_FAIRY.selectedRewards, entry)
-            local name = string.lower(entry.name)
-            -- add full name and its tokens as keywords
+            local name = norm(entry.name)
+            -- exact-name preference
+            AUTO_FAIRY.preferredNames[name] = true
+            -- keyword fallbacks
             AUTO_FAIRY.preferredSet[name] = true
             for tok in name:gmatch("%S+") do AUTO_FAIRY.preferredSet[tok] = true end
         end
@@ -1544,29 +1611,77 @@ end
 
 local function scoreReward(rec)
     local name = string.lower(tostring(rec.name or ""))
+    local typ  = string.lower(tostring(rec.typ or ""))
+    local qty  = tonumber(rec.qty or 1) or 1
     local score = 0
-    -- rarity keywords
-    local rar = {permanent=100, mythic=60, legendary=50, epic=40, rare=30, uncommon=20, common=10}
-    for k,v in pairs(rar) do if name:find(k,1,true) then score = score + v end end
-    -- amount extraction (e.g., +5, 1,000, 2k, 3m)
-    local amt = 0
+
+    -- Tokenize name once
+    local tokens = {}
+    for t in name:gmatch("%w+") do tokens[t] = true end
+
+    -- 1) Rarity and permanence first (type- or name-derived)
+    local rarity = {
+        permanent = 900, mythic = 650, legendary = 520, epic = 340, rare = 200,
+        uncommon = 100, common = 30, unique = 460, exclusive = 430, premium = 280,
+        aurora = 600, glimmering = 260, enchanted = 90
+    }
+    for k, v in pairs(rarity) do if name:find(k, 1, true) or typ:find(k, 1, true) then score = score + v end end
+    if typ:find("permanent", 1, true) then score = score + 200 end
+
+    -- 2) Value by item family (feature weights, not fixed items)
+    local family = {
+        vine=700, shard=320, egg=180, seed=90, radar=260, targeter=220, spray=200,
+    }
+    for k,v in pairs(family) do if tokens[k] then score = score + v end end
+    -- Synergy: aurora+vine is a strong combo; glimmering+shard also
+    if tokens["aurora"] and tokens["vine"] then score = score + 500 end
+    if tokens["glimmering"] and tokens["shard"] then score = score + 200 end
+
+    -- 3) Bundle/container penalties so packs/crates don't trump rarities
+    local bundlePenalty = 0
+    if tokens["pack"] then bundlePenalty = bundlePenalty + 80 end
+    if tokens["crate"] then bundlePenalty = bundlePenalty + 90 end
+    if name:find("seed pack", 1, true) then bundlePenalty = bundlePenalty + 120 end
+    score = score - bundlePenalty
+
+    -- 4) Quantity/amount influence (light, with type sensitivity)
+    -- Prefer quantity when it pairs with shards/eggs; points/currency get very little
+    local amtFromText = 0
     local num = name:match("(%d[%d,%.]*)%s*[kKmM]?")
     if num then
         num = num:gsub(",", "")
         local n = tonumber(num)
-        if n then amt = n end
-        if name:find("k",1,true) then amt = amt * 1e3 end
-        if name:find("m",1,true) then amt = amt * 1e6 end
-        score = score + math.min(amt/100, 200) -- cap amount contribution
+        if n then amtFromText = n end
+        if name:find("k",1,true) then amtFromText = amtFromText * 1e3 end
+        if name:find("m",1,true) then amtFromText = amtFromText * 1e6 end
     end
-    -- item bias
-    if name:find("pet",1,true) or name:find("seed",1,true) or name:find("gear",1,true) then score = score + 15 end
-    rec._score = score; rec._amount = amt; return score
+    local effQty = math.max(qty, amtFromText)
+    if effQty > 1 then
+        local boost = 0
+        if tokens["shard"] then boost = math.min(effQty * 35, 175)
+        elseif tokens["egg"] then boost = math.min(effQty * 30, 150)
+        elseif tokens["points"] or tokens["currency"] then boost = math.min(math.log10(effQty+1) * 8, 24)
+        else boost = math.min(math.log10(effQty+1) * 10, 30) end
+        score = score + boost
+    end
+
+    -- 5) Small nudges by type labels
+    if typ:find("points", 1, true) then score = score - 20 end
+    if typ:find("currency", 1, true) then score = score - 30 end
+
+    rec._score = score; rec._amount = effQty; return score
 end
 
 local function chooseBestReward(candidates)
     if not candidates or #candidates==0 then return nil end
-    -- prefer user keywords
+    -- 1) Exact-name preference first
+    if next(AUTO_FAIRY.preferredNames) then
+        for _, rec in ipairs(candidates) do
+            local n = tostring(rec.name or ""):lower():gsub("%s+"," "):gsub("^%s+"," "):gsub("%s+$","")
+            if AUTO_FAIRY.preferredNames[n] then return rec end
+        end
+    end
+    -- 2) Keyword preferences if any
     if next(AUTO_FAIRY.preferredSet) then
         for _, rec in ipairs(candidates) do
             local n = string.lower(tostring(rec.name or ""))
@@ -1575,7 +1690,7 @@ local function chooseBestReward(candidates)
             end
         end
     end
-    -- else score by heuristic
+    -- 3) Otherwise score by heuristic (rarity > bundles > amounts)
     local best, bs = nil, -1e9
     for _, rec in ipairs(candidates) do
         local s = scoreReward(rec)
@@ -1710,6 +1825,23 @@ local function checkAndRestartFairy(toast, reason)
         local ok = select(1, restartFairyTrack())
         if toast then toast(ok and ("Restarted Fairy Track" .. (reason and (" ("..reason..")") or "")) or "Restart failed") end
     end
+end
+
+-- Simple timed auto-restart loop every 5s (EZ route), gated by toggle
+local function startAutoRestartLoop(toast)
+    if AUTO_FAIRY._restartTask then return end
+    AUTO_FAIRY._restartTask = task.spawn(function()
+        while AUTO_FAIRY.autoRestartEnabled do
+            local ok = select(1, restartFairyTrack())
+            if toast and not ok then toast("Restart failed") end
+            task.wait(5)
+        end
+        AUTO_FAIRY._restartTask = nil
+    end)
+end
+
+local function stopAutoRestartLoop()
+    if AUTO_FAIRY._restartTask then task.cancel(AUTO_FAIRY._restartTask); AUTO_FAIRY._restartTask = nil end
 end
 
 local function claimBestFairyReward(toast)
@@ -3655,6 +3787,153 @@ local function buildApp()
         end)
     end
 
+    -- ====================== BEANSTALK EVENT: DEBUGGER =======================
+    do
+        local Players = game:GetService("Players")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local Workspace = game:GetService("Workspace")
+        local ROOTN = "BeanstalkEvent"
+        local DBG = { clone=nil, hi=nil, label=nil }
+
+        local function findDeep(container, name)
+            if not container then return nil end
+            local ok, inst = pcall(function() return container:FindFirstChild(name, true) end)
+            return ok and inst or nil
+        end
+
+        local function ensureVisible(root)
+            if not root then return end
+            for _,d in ipairs(root:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    d.Anchored = true
+                    d.LocalTransparencyModifier = 0
+                    d.Transparency = 0
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    d.Transparency = 0
+                elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                    d.Enabled = true
+                elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+                    d.Enabled = true
+                elseif d:IsA("ProximityPrompt") then
+                    d.Enabled = true
+                end
+            end
+        end
+
+        local function pivotInFront(model, studs)
+            studs = studs or 18
+            local ch = Players.LocalPlayer.Character
+            local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+            if not (model and hrp) then return end
+            local cf = hrp.CFrame * CFrame.new(0,0,-studs)
+            if model.PivotTo then model:PivotTo(cf)
+            else
+                local pp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+                if pp then pp.CFrame = cf end
+            end
+        end
+
+        local function addDebugViz(root)
+            if DBG.hi then DBG.hi:Destroy() end
+            local h = Instance.new("Highlight"); h.FillTransparency=0.85; h.OutlineTransparency=0.1
+            h.Adornee=root; h.Parent=root; DBG.hi=h
+
+            if DBG.label then DBG.label:Destroy() end
+            local bb = Instance.new("BillboardGui")
+            bb.Size = UDim2.new(0,220,0,50); bb.StudsOffsetWorldSpace = Vector3.new(0,6,0); bb.AlwaysOnTop=true
+            bb.Parent = root
+            local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.fromScale(1,1)
+            tl.Text = "[BeanstalkEvent debug]"; tl.TextColor3=Color3.new(1,1,1); tl.TextStrokeTransparency=0.2
+            tl.Font=Enum.Font.GothamBold; tl.TextScaled=true; tl.Parent=bb
+            DBG.label = bb
+        end
+
+        local function scanForBeanstalk()
+            local hits = {}
+            local function add(where, inst) if inst then table.insert(hits, {where=where, inst=inst}) end end
+            -- Workspace direct or deep
+            add("Workspace", Workspace:FindFirstChild(ROOTN) or findDeep(Workspace, ROOTN))
+            -- Replicated services
+            add("ReplicatedStorage", findDeep(ReplicatedStorage, ROOTN))
+            add("ReplicatedFirst",  findDeep(game:GetService("ReplicatedFirst"), ROOTN))
+            add("Lighting",         findDeep(game:GetService("Lighting"), ROOTN))
+            -- Top-level containers named like UpdateService
+            for _,child in ipairs(game:GetChildren()) do
+                local n = string.lower(child.Name or "")
+                if n == "updateservice" or n:find("update") then
+                    add(child.Name, findDeep(child, ROOTN))
+                end
+            end
+            local out = {}
+            for _,h in ipairs(hits) do if h.inst then table.insert(out, h) end end
+            return out
+        end
+
+        function Beanstalk_Scan()
+            local hits = scanForBeanstalk()
+            print(("[BeanstalkDebug] Found %d candidate(s):"):format(#hits))
+            for i,h in ipairs(hits) do
+                print(("  %d) %s → %s"):format(i, h.where, h.inst:GetFullName()))
+            end
+            if #hits == 0 then warn("[BeanstalkDebug] No BeanstalkEvent accessible to client") end
+            return hits
+        end
+
+        function Beanstalk_ShowExisting()
+            local inst = Workspace:FindFirstChild(ROOTN) or findDeep(Workspace, ROOTN)
+            if not inst then warn("[BeanstalkDebug] No existing BeanstalkEvent in Workspace"); return false end
+            ensureVisible(inst); addDebugViz(inst)
+            print("[BeanstalkDebug] Forced visible in Workspace:", inst:GetFullName())
+            return true
+        end
+
+        function Beanstalk_CloneFromAny()
+            local hits = scanForBeanstalk()
+            if #hits == 0 then warn("[BeanstalkDebug] Nothing to clone (server-only?)") return false end
+            if DBG.clone and DBG.clone.Parent then DBG.clone:Destroy(); DBG.clone=nil end
+            -- Prefer non-Workspace sources first
+            local src = hits[1].inst
+            for _,h in ipairs(hits) do if h.where ~= "Workspace" then src = h.inst break end end
+            local ok, clone = pcall(function() return src:Clone() end)
+            if not ok or not clone then warn("[BeanstalkDebug] Clone failed") return false end
+            clone.Name = "BeanstalkEvent_DEBUG"; clone.Parent = Workspace
+            ensureVisible(clone); pivotInFront(clone, 18); addDebugViz(clone)
+            DBG.clone = clone
+            local parts, prompts = 0, 0
+            for _,d in ipairs(clone:GetDescendants()) do if d:IsA("BasePart") then parts = parts + 1 end; if d:IsA("ProximityPrompt") then prompts = prompts + 1 end end
+            print(("[BeanstalkDebug] Spawned debug clone → %d parts, %d prompts"):format(parts, prompts))
+            return true
+        end
+
+        function Beanstalk_RemoveClone()
+            if DBG.clone and DBG.clone.Parent then DBG.clone:Destroy(); DBG.clone=nil; print("[BeanstalkDebug] Removed clone"); return true end
+            return false
+        end
+
+        -- expose in _G for console
+        _G.Beanstalk_Scan = Beanstalk_Scan
+        _G.Beanstalk_ShowExisting = Beanstalk_ShowExisting
+        _G.Beanstalk_CloneFromAny = Beanstalk_CloneFromAny
+        _G.Beanstalk_RemoveClone = Beanstalk_RemoveClone
+
+        -- UI wrappers expected by Events page
+        function revealBeanstalkEvent(toast)
+            local ok = Beanstalk_ShowExisting()
+            if not ok then ok = Beanstalk_CloneFromAny() end
+            if toast then
+                if ok then toast("Beanstalk: visible (existing or cloned)") else toast("Beanstalk: not found to clone") end
+            end
+        end
+        function clearBeanstalkClientClones(toast)
+            local removed = false
+            if Beanstalk_RemoveClone() then removed = true end
+            local ws = Workspace
+            local dbg = ws:FindFirstChild("BeanstalkEvent_DEBUG")
+            if dbg then dbg:Destroy(); removed = true end
+            if toast then toast(removed and "Beanstalk: cleared client clones" or "Beanstalk: no client clones") end
+        end
+    end
+
     -- EVENTS PAGE -------------------------------------------------------------
     do
     local P = makePage("Events")
@@ -3716,9 +3995,13 @@ local function buildApp()
         end)
 
         -- Auto-Restart toggle (merged under Fairy Event)
-        makeToggle(autoFairySection, "Auto-Restart Track", "When maxed, calls RestartFairyTrack", AUTO_FAIRY.autoRestartEnabled or false, function(on)
+        makeToggle(autoFairySection, "Auto-Restart Track", "Every 5s call RestartFairyTrack (EZ)", AUTO_FAIRY.autoRestartEnabled or false, function(on)
             AUTO_FAIRY.autoRestartEnabled = on
-            if on then checkAndRestartFairy(toast, "toggle-on") end
+            if on then
+                startAutoRestartLoop(toast)
+            else
+                stopAutoRestartLoop()
+            end
         end, toast)
 
     -- FAIRY WISH (merged into Fairy Event section)
@@ -3727,15 +4010,7 @@ local function buildApp()
             if on then startAutoWish(toast) else stopAutoWish(toast) end
         end, toast)
 
-        -- Debug: scan for wish buttons
-        local rowWishDebug = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},wishSection)
-        corner(rowWishDebug,8); stroke(rowWishDebug,1,THEME.BORDER); pad(rowWishDebug,6,6,6,6)
-        local btnWishDebug = mk("TextButton",{Text="Scan for Wish Buttons (debug)",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowWishDebug)
-        corner(btnWishDebug,8); stroke(btnWishDebug,1,THEME.BORDER); hover(btnWishDebug,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
-        btnWishDebug.MouseButton1Click:Connect(function()
-            local buttons = dumpWishButtons()
-            toast("Found " .. #buttons .. " buttons. See Output/WishButtonsDump.txt")
-        end)
+    -- (Removed debug: Scan for Wish Buttons)
 
         -- Manual wish test button
         local rowWishTest = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},wishSection)
@@ -3926,6 +4201,24 @@ local function buildApp()
         corner(btnRestartNow,8); stroke(btnRestartNow,1,THEME.BORDER); hover(btnRestartNow,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnRestartNow.MouseButton1Click:Connect(function()
             local ok = select(1, restartFairyTrack()); toast(ok and "Restarted Fairy Track" or "Restart failed")
+        end)
+
+        -- NEW: Beanstalk Event Tools
+        local beanSection = makeCollapsibleSection(P.Body, "Beanstalk Event", false)
+        local rowReveal = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
+        corner(rowReveal,8); stroke(rowReveal,1,THEME.BORDER); pad(rowReveal,6,6,6,6)
+        local btnReveal = mk("TextButton",{Text="Reveal Beanstalk in Workspace",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowReveal)
+        corner(btnReveal,8); stroke(btnReveal,1,THEME.BORDER); hover(btnReveal,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnReveal.MouseButton1Click:Connect(function()
+            revealBeanstalkEvent(toast)
+        end)
+
+        local rowClear = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
+        corner(rowClear,8); stroke(rowClear,1,THEME.BORDER); pad(rowClear,6,6,6,6)
+        local btnClear = mk("TextButton",{Text="Hide/Remove Client Clones",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClear)
+        corner(btnClear,8); stroke(btnClear,1,THEME.BORDER); hover(btnClear,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnClear.MouseButton1Click:Connect(function()
+            clearBeanstalkClientClones(toast)
         end)
     end
 
