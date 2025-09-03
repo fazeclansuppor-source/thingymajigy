@@ -1678,15 +1678,27 @@ local function chooseBestReward(candidates)
     if next(AUTO_FAIRY.preferredNames) then
         for _, rec in ipairs(candidates) do
             local n = tostring(rec.name or ""):lower():gsub("%s+"," "):gsub("^%s+"," "):gsub("%s+$","")
-            if AUTO_FAIRY.preferredNames[n] then return rec end
+            if AUTO_FAIRY.preferredNames[n] then
+                rec._pickReason = "preferred-name"
+                return rec
+            end
         end
+    -- If you have selected preferences but none are in the 3 choices, pick random to keep flow going
+    local idx = math.random(1, #candidates)
+    local rnd = candidates[idx]
+    if rnd then rnd._pickReason = "random-fallback" end
+    return rnd
     end
     -- 2) Keyword preferences if any
     if next(AUTO_FAIRY.preferredSet) then
         for _, rec in ipairs(candidates) do
             local n = string.lower(tostring(rec.name or ""))
             for token,_ in pairs(AUTO_FAIRY.preferredSet) do
-                if n:find(token,1,true) then return rec end
+                if n:find(token,1,true) then
+                    rec._pickReason = "keyword"
+                    rec._matchToken = token
+                    return rec
+                end
             end
         end
     end
@@ -1696,6 +1708,7 @@ local function chooseBestReward(candidates)
         local s = scoreReward(rec)
         if s > bs then best, bs = rec, s end
     end
+    if best then best._pickReason = "heuristic"; best._score = bs end
     return best
 end
 
@@ -1846,10 +1859,12 @@ end
 
 local function claimBestFairyReward(toast)
     -- 1) Try authoritative choices first
+    local fromDS = true
     local cands = getFairyChoicesFromDS()
 
     -- 2) If DS didn’t return anything (timing/UI-first case), scrape UI as fallback
     if #cands == 0 then
+        fromDS = false
         cands = getFairyRewardsFromUI_Grouped()
     end
 
@@ -1868,14 +1883,33 @@ local function claimBestFairyReward(toast)
         return false
     end
 
+    -- Logging: show source, fallback reason, and choice
+    local srcTxt = fromDS and "DataService" or "UI"
+    local qtyTxt = (pick.qty and (" x".. tostring(pick.qty))) or ""
+    local reason = pick._pickReason or "unknown"
+    if next(AUTO_FAIRY.preferredNames) or next(AUTO_FAIRY.preferredSet) then
+        if reason == "random-fallback" then
+            print("[FAIRY][CLAIM] No selected item present; choosing random to keep flow")
+        elseif reason ~= "preferred-name" and reason ~= "keyword" then
+            print("[FAIRY][CLAIM] No preferred match present; falling back to best-scored item")
+        end
+    end
+    local extra = ""
+    if reason == "heuristic" and pick._score then extra = ", score=".. tostring(math.floor(pick._score+0.5)) end
+    if reason == "keyword" and pick._matchToken then extra = ", token='".. tostring(pick._matchToken) .."'" end
+    print(string.format("[FAIRY][CLAIM] %d choices from %s", #cands, srcTxt))
+    print(string.format("[FAIRY][CLAIM] Picked: %s%s (%s%s)", tostring(pick.name or pick.id or "?"), qtyTxt, reason, extra))
+
     -- Claim via Remote if we have an id, else click the card on the UI
     local ok = false
     if pick.id then
         ok = select(1, claimFairyRewardById(pick.id))
+        print(ok and "[FAIRY][CLAIM] Claimed via Remote" or "[FAIRY][CLAIM] Remote claim failed; trying UI click if available")
     end
     if (not ok) and pick.frame then
         clickGuiCenter(pick.frame)
         ok = true
+        print("[FAIRY][CLAIM] Claimed via UI click")
     end
 
     if toast then
@@ -3002,6 +3036,28 @@ TeleportConn = mouse.Button1Down:Connect(function()
     if ch and pos then ch:PivotTo(CFrame.new(pos + Vector3.new(0,3,0))) end
 end)
 
+-- Anti-AFK (prevents 20m idle kick)
+local ANTI_AFK = { enabled=false, conn=nil }
+local function setAntiAFK(on)
+    if on == ANTI_AFK.enabled then return end
+    ANTI_AFK.enabled = on and true or false
+    if ANTI_AFK.enabled then
+        if ANTI_AFK.conn then pcall(function() ANTI_AFK.conn:Disconnect() end); ANTI_AFK.conn=nil end
+        local VirtualUser = game:GetService("VirtualUser")
+        ANTI_AFK.conn = Players.LocalPlayer.Idled:Connect(function()
+            pcall(function()
+                VirtualUser:CaptureController()
+                local cam = workspace.CurrentCamera
+                VirtualUser:ClickButton2(Vector2.new(0,0), cam and cam.CFrame or CFrame.new())
+            end)
+        end)
+        print("[Anti-AFK] Enabled")
+    else
+        if ANTI_AFK.conn then pcall(function() ANTI_AFK.conn:Disconnect() end); ANTI_AFK.conn=nil end
+        print("[Anti-AFK] Disabled")
+    end
+end
+
 -- ============================== WORLD: GRASS OVERLAY =========================
 local GO = {
     Enabled=false,
@@ -3712,6 +3768,7 @@ local function buildApp()
         makeToggle(GA,"Infinite Jump","Allow jumping mid-air",false,function(on) InfiniteJump.Enabled=on end,toast)
         makeToggle(GA,"NoClip","Disable collisions on your character",false,function(on) setNoClip(on) end,toast)
         makeToggle(GA,"Ctrl + Click Teleport","Hold LeftCtrl and click to teleport",false,function(on) Teleport.Enabled=on end,toast)
+    makeToggle(GA,"Anti-AFK","Prevents 20m idle kick (VirtualUser)",false,function(on) setAntiAFK(on) end,toast)
     end
 
     -- MISC PAGE (formerly World) ---------------------------------------------
@@ -3728,6 +3785,15 @@ local function buildApp()
         local V = makeCollapsibleSection(P.Body, "Visuals", false)
         makeToggle(V, "Vibrant Grass Overlay", "Client-only overlay (no duplicates)", false, function(on)
             if on then GO_Start() else GO_Stop() end
+        end, toast)
+
+        -- Performance section
+        local PR = makeCollapsibleSection(P.Body, "Performance", false)
+        makeToggle(PR, "Hide Other Players' Gardens", "Removes other gardens from your view (client-only)", false, function(on)
+            PERF.SetHideOtherGardens(on)
+        end, toast)
+        makeToggle(PR, "Low Graphics Mode", "Disable heavy post effects, shadows, and water features", false, function(on)
+            PERF.SetLowGraphics(on)
         end, toast)
 
     -- Beach controls (moved under Visuals)
@@ -3750,6 +3816,337 @@ local function buildApp()
     end
 
     -- (Removed stray duplicated 'Load Fairy Watcher' block previously misplaced here)
+
+    -- ============================== PERFORMANCE HELPERS ==============================
+    -- Hide other players' gardens (client-only) and low graphics options.
+    PERF = PERF or {}
+    do
+        local Workspace = game:GetService("Workspace")
+        local Lighting = game:GetService("Lighting")
+
+        PERF.GARDENS = {
+            enabled = false,
+            hiddenRoots = {},      -- [Model]=true
+            partState = {},        -- [BasePart] = {ltm, canCollide, castShadow}
+            guiState = {},         -- [GuiBase2d] = prevEnabled
+            effectState = {},      -- [Emitter/Beam/Trail] = prevEnabled
+            decalState = {},       -- [Decal/Texture] = prevTransparency
+            highlightState = {},   -- [Highlight] = {enabled, fill, outline}
+            conns = {},            -- connections to auto-hide new descendants
+            waitTask = nil,        -- deferred task waiting for player farm
+        }
+
+        local function markHiddenDesc(d)
+            -- Never hide anything inside your own farm/plants folder
+            if CACHE then
+                local pf = CACHE.plantsFolder
+                local farm = CACHE.playerFarm
+                if (pf and d:IsDescendantOf(pf)) or (farm and d:IsDescendantOf(farm)) then return end
+            end
+            if d:IsA("BasePart") then
+                if not PERF.GARDENS.partState[d] then
+                    PERF.GARDENS.partState[d] = { d.LocalTransparencyModifier, d.CanCollide, d.CastShadow }
+                end
+                d.LocalTransparencyModifier = 1
+                d.CanCollide = false
+                d.CastShadow = false
+            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                if not PERF.GARDENS.guiState[d] then PERF.GARDENS.guiState[d] = d.Enabled end
+                d.Enabled = false
+            elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+                if not PERF.GARDENS.effectState[d] then PERF.GARDENS.effectState[d] = d.Enabled end
+                d.Enabled = false
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                if not PERF.GARDENS.decalState[d] then PERF.GARDENS.decalState[d] = d.Transparency end
+                d.Transparency = 1
+            elseif d:IsA("Highlight") then
+                if not PERF.GARDENS.highlightState[d] then PERF.GARDENS.highlightState[d] = {d.Enabled, d.FillTransparency, d.OutlineTransparency} end
+                d.Enabled = false; d.FillTransparency = 1; d.OutlineTransparency = 1
+            end
+        end
+
+    local function hideRoot(model)
+            if PERF.GARDENS.hiddenRoots[model] then return end
+            PERF.GARDENS.hiddenRoots[model] = true
+            for _,d in ipairs(model:GetDescendants()) do markHiddenDesc(d) end
+            local c = model.DescendantAdded:Connect(function(d)
+                if PERF.GARDENS.enabled then markHiddenDesc(d) end
+            end)
+            table.insert(PERF.GARDENS.conns, c)
+        end
+
+        local function restoreAll()
+            for inst, prev in pairs(PERF.GARDENS.partState) do
+                if inst and inst.Parent then
+                    inst.LocalTransparencyModifier = prev[1] or 0
+                    inst.CanCollide = (prev[2] ~= nil) and prev[2] or inst.CanCollide
+                    inst.CastShadow = (prev[3] ~= nil) and prev[3] or inst.CastShadow
+                end
+                PERF.GARDENS.partState[inst] = nil
+            end
+            for inst, prev in pairs(PERF.GARDENS.guiState) do
+                if inst and inst.Parent then inst.Enabled = prev and true or false end
+                PERF.GARDENS.guiState[inst] = nil
+            end
+            for inst, prev in pairs(PERF.GARDENS.effectState) do
+                if inst and inst.Parent then inst.Enabled = prev and true or false end
+                PERF.GARDENS.effectState[inst] = nil
+            end
+            for inst, prev in pairs(PERF.GARDENS.decalState) do
+                if inst and inst.Parent then inst.Transparency = prev or 0 end
+                PERF.GARDENS.decalState[inst] = nil
+            end
+            for inst, prev in pairs(PERF.GARDENS.highlightState) do
+                if inst and inst.Parent then
+                    inst.Enabled = prev[1] and true or false
+                    inst.FillTransparency = prev[2] or inst.FillTransparency
+                    inst.OutlineTransparency = prev[3] or inst.OutlineTransparency
+                end
+                PERF.GARDENS.highlightState[inst] = nil
+            end
+            for _,c in ipairs(PERF.GARDENS.conns) do pcall(function() c:Disconnect() end) end
+            PERF.GARDENS.conns = {}
+            PERF.GARDENS.hiddenRoots = {}
+        end
+
+        local function looksLikeGarden(model)
+            if not model or not model:IsA("Model") then return false end
+            -- Only treat models that themselves contain Important/Plants_Physical as gardens.
+            local important = model:FindFirstChild("Important")
+            return important and important:FindFirstChild("Plants_Physical") ~= nil
+        end
+
+        local function isOwnGarden(model)
+            if not model then return false end
+            if CACHE and CACHE.playerFarm and (model==CACHE.playerFarm or model:IsDescendantOf(CACHE.playerFarm)) then return true end
+            if CACHE and CACHE.plantsFolder and model:IsDescendantOf(CACHE.plantsFolder) then return true end
+            return false
+        end
+
+        local function isOwnPlantsFolder(folder)
+            if not folder or not folder:IsA("Folder") then return false end
+            if CACHE and CACHE.plantsFolder and (folder==CACHE.plantsFolder or folder:IsDescendantOf(CACHE.plantsFolder)) then return true end
+            if CACHE and CACHE.playerFarm and folder:IsDescendantOf(CACHE.playerFarm) then return true end
+            -- Fallback: if folder appears to contain any plants owned by LocalPlayer, treat as own
+            local okOwn = false
+            local count = 0
+            for _,d in ipairs(folder:GetDescendants()) do
+                count = count + 1
+                if d:IsA("Model") or d:IsA("BasePart") then
+                    if ownsPlant and ownsPlant(LocalPlayer, d) then okOwn = true; break end
+                end
+                if count > 400 then break end -- cap for performance
+            end
+            if okOwn then return true end
+            return false
+        end
+
+        local function applyHideAll()
+            -- Hide all current gardens except ours (scan deep)
+            local hiddenCount = 0
+            local function tryHide(model)
+                if not model or not model.Parent then return end
+                if isOwnGarden(model) then return end
+                if looksLikeGarden(model) then hideRoot(model); hiddenCount = hiddenCount + 1 end
+            end
+            for _,d in ipairs(Workspace:GetDescendants()) do if d:IsA("Model") then tryHide(d) end end
+
+            -- Also hide any stand-alone plants folders that are not ours
+            local PLANT_FOLDERS = (HARVEST and HARVEST.PLANTS_FOLDERS) or {"Plants_Physical","Plants","Garden","Crops","Plot","Plots"}
+            local set = {}; for _,n in ipairs(PLANT_FOLDERS) do set[n]=true end
+            local function hideFolder(folder)
+                if isOwnPlantsFolder(folder) then return end
+                PERF.GARDENS.hiddenRoots[folder] = true
+                for _,d in ipairs(folder:GetDescendants()) do markHiddenDesc(d) end
+                local c = folder.DescendantAdded:Connect(function(d)
+                    if PERF.GARDENS.enabled then markHiddenDesc(d) end
+                end)
+                table.insert(PERF.GARDENS.conns, c)
+                hiddenCount = hiddenCount + 1
+            end
+            for _,d in ipairs(Workspace:GetDescendants()) do
+                if d:IsA("Folder") and set[d.Name] then
+                    if not isOwnPlantsFolder(d) then hideFolder(d) end
+                end
+            end
+            print(string.format("[PERF] Hidden %d other garden root(s)/folder(s)", hiddenCount))
+        end
+
+        function PERF.SetHideOtherGardens(on)
+            if on == PERF.GARDENS.enabled then return end
+            PERF.GARDENS.enabled = on and true or false
+            if not PERF.GARDENS.enabled then
+                restoreAll()
+                print("[PERF] Hide Other Gardens: OFF (restored)")
+                return
+            end
+            -- If we don't know your farm yet, defer until it’s found
+            if not (CACHE and ((CACHE.playerFarm and CACHE.playerFarm.Parent) or (CACHE.plantsFolder and CACHE.plantsFolder.Parent))) then
+                if PERF.GARDENS.waitTask then pcall(function() task.cancel(PERF.GARDENS.waitTask) end); PERF.GARDENS.waitTask=nil end
+                print("[PERF] Waiting for your farm to be detected before hiding others…")
+                PERF.GARDENS.waitTask = task.spawn(function()
+                    local t0=os.clock()
+                    while PERF.GARDENS.enabled and not ((CACHE.playerFarm and CACHE.playerFarm.Parent) or (CACHE.plantsFolder and CACHE.plantsFolder.Parent)) do
+                        task.wait(0.25)
+                        if os.clock()-t0>15 then break end
+                    end
+                    if PERF.GARDENS.enabled then applyHideAll() end
+                    PERF.GARDENS.waitTask=nil
+                end)
+            else
+                applyHideAll()
+            end
+            -- Keep up with new models added
+        local c1 = Workspace.ChildAdded:Connect(function(inst)
+                if not PERF.GARDENS.enabled then return end
+                if inst:IsA("Model") then
+                    if not isOwnGarden(inst) and looksLikeGarden(inst) then hideRoot(inst) end
+                elseif inst:IsA("Folder") and not isOwnPlantsFolder(inst) then
+                    local names = (HARVEST and HARVEST.PLANTS_FOLDERS) or {"Plants_Physical","Plants","Garden","Crops","Plot","Plots"}
+            for _,nm in ipairs(names) do if inst.Name==nm then hideFolder(inst) break end end
+                end
+            end)
+            local c2 = Workspace.DescendantAdded:Connect(function(inst)
+                if not PERF.GARDENS.enabled then return end
+                if inst:IsA("Model") then
+                    if not isOwnGarden(inst) and looksLikeGarden(inst) then hideRoot(inst) end
+                elseif inst:IsA("Folder") and not isOwnPlantsFolder(inst) then
+                    local names = (HARVEST and HARVEST.PLANTS_FOLDERS) or {"Plants_Physical","Plants","Garden","Crops","Plot","Plots"}
+            for _,nm in ipairs(names) do if inst.Name==nm then hideFolder(inst) break end end
+                end
+            end)
+            table.insert(PERF.GARDENS.conns, c1); table.insert(PERF.GARDENS.conns, c2)
+            print("[PERF] Hide Other Gardens: ON")
+        end
+
+        -- Low graphics: disable post effects and heavy lighting features
+        PERF.GFX = { enabled = false, saved = nil, conns = {} }
+        function PERF.SetLowGraphics(on)
+            if on == PERF.GFX.enabled then return end
+            PERF.GFX.enabled = on and true or false
+            local L = Lighting
+            local PS = settings().Rendering
+            if PERF.GFX.enabled then
+                PERF.GFX.saved = {
+                    GlobalShadows = L.GlobalShadows,
+                    EnvSpec = L.EnvironmentSpecularScale,
+                    EnvDiff = L.EnvironmentDiffuseScale,
+                    Atmos = {},
+                    Post = {},
+                    Parts = {},
+                    Decals = {},
+                    Effects = {},
+                    Water = {
+                        WaveSize = workspace.Terrain.WaterWaveSize,
+                        WaveSpeed = workspace.Terrain.WaterWaveSpeed,
+                        Reflectance = workspace.Terrain.WaterReflectance,
+                        Transparency = workspace.Terrain.WaterTransparency,
+                    },
+                    Render = {
+                        EditQualityLevel = PS and PS.EditQualityLevel,
+                    }
+                }
+                -- save post effects
+                for _,cls in ipairs({"BloomEffect","BlurEffect","DepthOfFieldEffect","SunRaysEffect","ColorCorrectionEffect","Atmosphere"}) do
+                    for _,eff in ipairs(L:GetChildren()) do
+                        if eff.ClassName == cls then
+                            if eff:IsA("PostEffect") then
+                                table.insert(PERF.GFX.saved.Post, {ref=eff, Enabled=eff.Enabled})
+                                eff.Enabled = false
+                            elseif eff.ClassName == "Atmosphere" then
+                                -- Reparent to nil to effectively disable; record to restore later
+                                table.insert(PERF.GFX.saved.Atmos, {ref=eff, parent=eff.Parent})
+                                eff.Parent = nil
+                            end
+                        end
+                    end
+                end
+                -- Aggressive world downgrade: parts/decals/effects
+                local function downgrade(inst)
+                    if inst:IsA("BasePart") then
+                        if not PERF.GFX.saved.Parts[inst] then
+                            PERF.GFX.saved.Parts[inst] = {Material=inst.Material, Reflectance=inst.Reflectance, CastShadow=inst.CastShadow}
+                        end
+                        inst.Material = Enum.Material.Plastic
+                        inst.Reflectance = 0
+                        inst.CastShadow = false
+                        local mp = inst:IsA("MeshPart") and inst or nil
+                        if mp and mp.RenderFidelity ~= Enum.RenderFidelity.Performance then
+                            pcall(function() mp.RenderFidelity = Enum.RenderFidelity.Performance end)
+                        end
+                    elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                        if PERF.GFX.saved.Decals[inst] == nil then PERF.GFX.saved.Decals[inst] = inst.Transparency end
+                        inst.Transparency = 1
+                    elseif inst:IsA("ParticleEmitter") or inst:IsA("Beam") or inst:IsA("Trail") then
+                        if PERF.GFX.saved.Effects[inst] == nil then PERF.GFX.saved.Effects[inst] = inst.Enabled end
+                        inst.Enabled = false
+                    end
+                end
+                for _,d in ipairs(Workspace:GetDescendants()) do downgrade(d) end
+                -- Live updates while ON
+                table.insert(PERF.GFX.conns, Workspace.DescendantAdded:Connect(function(d)
+                    if PERF.GFX.enabled then downgrade(d) end
+                end))
+                -- lighting knobs
+                L.GlobalShadows = false
+                L.EnvironmentSpecularScale = 0
+                L.EnvironmentDiffuseScale = 0
+                -- terrain water
+                workspace.Terrain.WaterWaveSize = 0
+                workspace.Terrain.WaterWaveSpeed = 0
+                workspace.Terrain.WaterReflectance = 0
+                workspace.Terrain.WaterTransparency = 1
+                -- lower client graphics if accessible
+                pcall(function()
+                    if PS and type(PS.EditQualityLevel) == "number" then
+                        PS.EditQualityLevel = math.max(1, (PS.EditQualityLevel or 1))
+                    end
+                end)
+                print("[PERF] Low Graphics: ON")
+            else
+                if PERF.GFX.saved then
+                    L.GlobalShadows = PERF.GFX.saved.GlobalShadows
+                    L.EnvironmentSpecularScale = PERF.GFX.saved.EnvSpec
+                    L.EnvironmentDiffuseScale = PERF.GFX.saved.EnvDiff
+                    for _,rec in ipairs(PERF.GFX.saved.Post or {}) do
+                        if rec.ref and rec.ref.Parent then rec.ref.Enabled = rec.Enabled end
+                    end
+                    for _,rec in ipairs(PERF.GFX.saved.Atmos or {}) do
+                        if rec.ref then rec.ref.Parent = rec.parent or L end
+                    end
+                    for inst, prev in pairs(PERF.GFX.saved.Parts or {}) do
+                        if inst and inst.Parent then
+                            inst.Material = prev.Material or inst.Material
+                            inst.Reflectance = (prev.Reflectance ~= nil) and prev.Reflectance or inst.Reflectance
+                            inst.CastShadow = (prev.CastShadow ~= nil) and prev.CastShadow or inst.CastShadow
+                        end
+                    end
+                    for inst, prev in pairs(PERF.GFX.saved.Decals or {}) do
+                        if inst and inst.Parent then inst.Transparency = prev end
+                    end
+                    for inst, prev in pairs(PERF.GFX.saved.Effects or {}) do
+                        if inst and inst.Parent then inst.Enabled = prev end
+                    end
+                    for _,c in ipairs(PERF.GFX.conns) do pcall(function() c:Disconnect() end) end
+                    PERF.GFX.conns = {}
+                    local W = PERF.GFX.saved.Water
+                    if W then
+                        workspace.Terrain.WaterWaveSize = W.WaveSize
+                        workspace.Terrain.WaterWaveSpeed = W.WaveSpeed
+                        workspace.Terrain.WaterReflectance = W.Reflectance
+                        workspace.Terrain.WaterTransparency = W.Transparency
+                    end
+                    pcall(function()
+                        if PS and PERF.GFX.saved.Render then
+                            PS.EditQualityLevel = PERF.GFX.saved.Render.EditQualityLevel
+                        end
+                    end)
+                end
+                PERF.GFX.saved = nil
+                print("[PERF] Low Graphics: OFF (restored)")
+            end
+        end
+    end
 
     -- SCRIPTS PAGE -------------------------------------------------------------
     do
