@@ -73,6 +73,12 @@ local function getSetting(key, defaultValue)
     return defaultValue
 end
 
+-- Function to set a setting value and save to file
+local function setSetting(key, value)
+    SETTINGS.data[key] = value
+    saveSettings()
+end
+
 -- Function to save selected items array
 local function saveSelectedItems(settingKey, selectedArray)
     local itemKeys = {}
@@ -3188,23 +3194,45 @@ TeleportConn = mouse.Button1Down:Connect(function()
 end)
 
 -- Anti-AFK (prevents 20m idle kick)
-local ANTI_AFK = { enabled=false, conn=nil }
+local ANTI_AFK = { enabled=false, conn=nil, heartbeatConn=nil }
 local function setAntiAFK(on)
     if on == ANTI_AFK.enabled then return end
     ANTI_AFK.enabled = on and true or false
     if ANTI_AFK.enabled then
+        -- Clean up existing connections
         if ANTI_AFK.conn then pcall(function() ANTI_AFK.conn:Disconnect() end); ANTI_AFK.conn=nil end
+        if ANTI_AFK.heartbeatConn then pcall(function() ANTI_AFK.heartbeatConn:Disconnect() end); ANTI_AFK.heartbeatConn=nil end
+        
         local VirtualUser = game:GetService("VirtualUser")
+        
+        -- Primary anti-AFK: respond to idle event
         ANTI_AFK.conn = Players.LocalPlayer.Idled:Connect(function()
             pcall(function()
                 VirtualUser:CaptureController()
                 local cam = workspace.CurrentCamera
                 VirtualUser:ClickButton2(Vector2.new(0,0), cam and cam.CFrame or CFrame.new())
+                print("[Anti-AFK] Responded to idle event")
             end)
         end)
-        print("[Anti-AFK] Enabled")
+        
+        -- Secondary anti-AFK: periodic activity every 10 minutes
+        local lastActivity = tick()
+        ANTI_AFK.heartbeatConn = RunService.Heartbeat:Connect(function()
+            if tick() - lastActivity >= 600 then -- 10 minutes
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    local cam = workspace.CurrentCamera
+                    VirtualUser:ClickButton2(Vector2.new(0,0), cam and cam.CFrame or CFrame.new())
+                    print("[Anti-AFK] Periodic activity triggered")
+                    lastActivity = tick()
+                end)
+            end
+        end)
+        
+        print("[Anti-AFK] Enabled with dual protection")
     else
         if ANTI_AFK.conn then pcall(function() ANTI_AFK.conn:Disconnect() end); ANTI_AFK.conn=nil end
+        if ANTI_AFK.heartbeatConn then pcall(function() ANTI_AFK.heartbeatConn:Disconnect() end); ANTI_AFK.heartbeatConn=nil end
         print("[Anti-AFK] Disabled")
     end
 end
