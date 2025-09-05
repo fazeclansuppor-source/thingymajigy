@@ -14,6 +14,157 @@ local RunService         = game:GetService("RunService")
 local Workspace          = game:GetService("Workspace")
 local LocalPlayer        = Players.LocalPlayer
 
+-- ============================== SETTINGS PERSISTENCE ==============================
+local SETTINGS = {
+    fileName = "GAGHub_Settings.json",
+    data = {},
+    defaults = {}
+}
+
+-- Function to save settings to file
+local function saveSettings()
+    local success, err = pcall(function()
+        local HttpService = game:GetService("HttpService")
+        local jsonData = HttpService:JSONEncode(SETTINGS.data)
+        writefile(SETTINGS.fileName, jsonData)
+        print("[Settings] Saved to " .. SETTINGS.fileName)
+    end)
+    if not success then
+        warn("[Settings] Failed to save: " .. tostring(err))
+    end
+    return success
+end
+
+-- Function to load settings from file
+local function loadSettings()
+    local success, result = pcall(function()
+        if not isfile(SETTINGS.fileName) then
+            print("[Settings] No settings file found, using defaults")
+            return false
+        end
+        
+        local HttpService = game:GetService("HttpService")
+        local fileContent = readfile(SETTINGS.fileName)
+        local loadedData = HttpService:JSONDecode(fileContent)
+        
+        if type(loadedData) == "table" then
+            SETTINGS.data = loadedData
+            print("[Settings] Loaded from " .. SETTINGS.fileName)
+            return true
+        else
+            warn("[Settings] Invalid data format in settings file")
+            return false
+        end
+    end)
+    
+    if not success then
+        warn("[Settings] Failed to load: " .. tostring(result))
+        return false
+    end
+    
+    return result
+end
+
+-- Function to get a setting value (with default fallback)
+local function getSetting(key, defaultValue)
+    if SETTINGS.data[key] ~= nil then
+        return SETTINGS.data[key]
+    end
+    return defaultValue
+end
+
+-- Function to save selected items array
+local function saveSelectedItems(settingKey, selectedArray)
+    local itemKeys = {}
+    for _, item in ipairs(selectedArray) do
+        table.insert(itemKeys, item.key or item.name or item.displayName)
+    end
+    setSetting(settingKey, itemKeys)
+end
+
+-- Function to load selected items array
+local function loadSelectedItems(settingKey, availableArray, selectedArray)
+    local savedKeys = getSetting(settingKey, {})
+    if type(savedKeys) ~= "table" then return end
+    
+    -- Clear current selections
+    for _, item in ipairs(availableArray) do
+        item.selected = false
+    end
+    selectedArray = {}  -- Clear the selected array
+    
+    -- Apply saved selections
+    for _, savedKey in ipairs(savedKeys) do
+        for _, item in ipairs(availableArray) do
+            local itemKey = item.key or item.name or item.displayName
+            if itemKey == savedKey then
+                item.selected = true
+                table.insert(selectedArray, item)
+                break
+            end
+        end
+    end
+    
+    return selectedArray
+end
+
+-- Initialize settings system
+local function initializeSettings()
+    loadSettings()
+    
+    -- Set up defaults for all major settings
+    SETTINGS.defaults = {
+        -- Auto Collection
+        autoCollectEnabled = false,
+        mutationFilterText = "",
+        mutationFilterEnabled = false,
+        
+        -- Auto Sell
+        autoSellEnabled = false,
+        
+        -- Auto Fairy
+        autoFairyEnabled = false,
+        autoWishEnabled = false,
+        autoClaimEnabled = false,
+        autoRestartEnabled = false,
+        fairySelectedRewards = {},
+        
+        -- Player Settings
+        customSpeedEnabled = false,
+        walkSpeed = 16,
+        flyEnabled = false,
+        flySpeed = 80,
+        infiniteJumpEnabled = false,
+        noClipEnabled = false,
+        teleportEnabled = false,
+        antiAFKEnabled = false,
+        
+        -- Auto Shops
+        autoShopEnabled = false,
+        autoShopMode = "selected", -- "selected" or "all"
+        selectedSeeds = {},
+        autoGearEnabled = false,
+        autoGearMode = "selected",
+        selectedGear = {},
+        autoEggEnabled = false,
+        autoEggMode = "selected", 
+        selectedEggs = {},
+        
+        -- UI Settings
+        sidebarCompact = false,
+        
+        -- Visuals
+        grassOverlayEnabled = false,
+        hideOtherGardensEnabled = false,
+        lowGraphicsEnabled = false,
+    }
+    
+    print("[Settings] Settings system initialized")
+end
+
+-- Call initialization
+initializeSettings()
+
 -- ============================== PERFORMANCE OPTIMIZATION =====================
 -- Pre-cache frequently used data to avoid repeated lookups
 local CACHE = {
@@ -3349,7 +3500,7 @@ local function makeToaster(rootGui)
     return toast
 end
 
-local function makeToggle(parent,text,subtext,default,onChanged,toast)
+local function makeToggle(parent,text,subtext,default,onChanged,toast,settingKey)
     local row=mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,50)},parent)
     corner(row,8); stroke(row,1,THEME.BORDER); pad(row,8,12,8,12)
     local left=mk("Frame",{BackgroundTransparency=1,Size=UDim2.new(1,-80,1,0)},row)
@@ -3361,7 +3512,10 @@ local function makeToggle(parent,text,subtext,default,onChanged,toast)
     local sw=mk("TextButton",{AutoButtonColor=false,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=UDim2.new(0,52,0,24),BackgroundColor3=THEME.BG2,Text=""},row)
     corner(sw,12); stroke(sw,1,THEME.BORDER)
     local knob=mk("Frame",{Size=UDim2.new(0,18,0,18),Position=UDim2.new(0,3,0,3),BackgroundColor3=THEME.MUTED},sw); corner(knob,9)
-    local state= default and true or false
+    
+    -- Load saved value if settingKey is provided
+    local state = settingKey and getSetting(settingKey, default) or (default and true or false)
+    
     local function render()
         if state then
             TweenService:Create(sw,TweenInfo.new(.18,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{BackgroundColor3=THEME.ACCENT}):Play()
@@ -3371,9 +3525,27 @@ local function makeToggle(parent,text,subtext,default,onChanged,toast)
             TweenService:Create(knob,TweenInfo.new(.18,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=UDim2.new(0,3,0,3),BackgroundColor3=THEME.MUTED}):Play()
         end
     end
-    sw.MouseButton1Click:Connect(function() state=not state; render(); if onChanged then task.spawn(onChanged,state) end; if toast then toast(text..": "..(state and "ON" or "OFF")) end end)
+    
+    sw.MouseButton1Click:Connect(function() 
+        state=not state 
+        render()
+        
+        -- Save to settings if settingKey is provided
+        if settingKey then
+            setSetting(settingKey, state)
+        end
+        
+        if onChanged then 
+            task.spawn(onChanged,state) 
+        end 
+        
+        if toast then 
+            toast(text..": "..(state and "ON" or "OFF")) 
+        end 
+    end)
+    
     render(); hover(row,{BackgroundColor3=THEME.BG2},{BackgroundColor3=THEME.CARD})
-    return {Set=function(v) state=v; render() end, Get=function() return state end, Instance=row}
+    return {Set=function(v) state=v; render(); if settingKey then setSetting(settingKey, v) end end, Get=function() return state end, Instance=row}
 end
 
 local function groupBox(parent, title)
@@ -3391,7 +3563,7 @@ local function groupBox(parent, title)
 end
 
 -- Slider row (clamped knob; textbox centered)
-local function sliderRow(parent, label, minV, maxV, startV, onChange, lockDrag, unlockDrag)
+local function sliderRow(parent, label, minV, maxV, startV, onChange, lockDrag, unlockDrag, settingKey)
     local row = mk("Frame", {BackgroundColor3=THEME.CARD, Size=UDim2.new(1,0,0,56)}, parent)
     corner(row,8); stroke(row,1,THEME.BORDER); pad(row,8,10,8,10)
     mk("TextLabel", {BackgroundTransparency=1, Font=FONTS.H, Text=label, TextSize=15, TextColor3=THEME.TEXT, TextXAlignment=Enum.TextXAlignment.Left, Size=UDim2.new(1,0,0,18)}, row)
@@ -3401,15 +3573,18 @@ local function sliderRow(parent, label, minV, maxV, startV, onChange, lockDrag, 
     local knob  = mk("Frame", {Parent=track, BackgroundColor3=THEME.ACCENT, Size=UDim2.new(0,14,0,14), AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0.5,0)}, track)
     corner(knob,7)
 
+    -- Load saved value if settingKey is provided
+    local savedValue = settingKey and getSetting(settingKey, startV) or startV
+    
     local box   = mk("TextBox", {
-        Text=tostring(startV), Font=FONTS.H, TextSize=14, TextColor3=THEME.TEXT,
+        Text=tostring(savedValue), Font=FONTS.H, TextSize=14, TextColor3=THEME.TEXT,
         BackgroundColor3=THEME.BG2, Size=UDim2.new(0,84,0,26),
         AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-10,0.5,0), ClearTextOnFocus=false
     }, row)
     corner(box,8); stroke(box,1,THEME.BORDER)
 
     local dragging=false
-    local current = startV
+    local current = savedValue
     local KNOB_R = 7
     local function padFrac() return KNOB_R / math.max(1, track.AbsoluteSize.X) end
     local function v2a(v) local pf=padFrac(); return pf + ((v-minV)/(maxV-minV))*(1-2*pf) end
@@ -3419,6 +3594,11 @@ local function sliderRow(parent, label, minV, maxV, startV, onChange, lockDrag, 
         box.Text = tostring(current)
         local a = math.clamp(v2a(current), padFrac(), 1-padFrac())
         knob.Position = UDim2.new(a, 0, 0.5, 0)
+        
+        -- Save to settings if settingKey is provided
+        if settingKey then
+            setSetting(settingKey, current)
+        end
     end
     local function setFromMouse(x)
         local raw = (x - track.AbsolutePosition.X)/math.max(1, track.AbsoluteSize.X)
@@ -3429,7 +3609,7 @@ local function sliderRow(parent, label, minV, maxV, startV, onChange, lockDrag, 
     end
 
     track:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() setVisual(current) end)
-    task.defer(function() setVisual(startV) end)
+    task.defer(function() setVisual(savedValue) end)
 
     knob.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true; if lockDrag then lockDrag() end end end)
     knob.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false; if unlockDrag then unlockDrag() end end end)
@@ -3623,7 +3803,7 @@ local function buildApp()
             autoCollectSection,
             "Auto-Collect Plants",
             "Automatically collect all ready plants continuously",
-            AUTO.enabled,
+            getSetting("autoCollectEnabled", false),
             function(on)
                 if on then
                     AutoStart(toast)
@@ -3631,7 +3811,8 @@ local function buildApp()
                     AutoStop(toast)
                 end
             end,
-            toast
+            toast,
+            "autoCollectEnabled"
         )
 
         -- Mutation Filter UI (text list + toggle)
@@ -3639,7 +3820,7 @@ local function buildApp()
         corner(rowMF,8); stroke(rowMF,1,THEME.BORDER); pad(rowMF,6,6,6,6)
 
         local tb = mk("TextBox", {
-            Text = MUTATION.lastText or "",
+            Text = getSetting("mutationFilterText", ""),
             PlaceholderText = "Mutations to collect (e.g. Glimmering, Rainbow, Golden, etc)",
             Font = FONTS.H, TextSize = 14, TextColor3 = THEME.TEXT,
             BackgroundColor3 = THEME.BG2, Size = UDim2.new(1,0,1,0),
@@ -3647,9 +3828,15 @@ local function buildApp()
         }, rowMF)
         corner(tb,8); stroke(tb,1,THEME.BORDER)
 
+        -- Load saved mutation filter on startup
+        if tb.Text and #tb.Text > 0 then
+            setMutationFilterFromText(tb.Text)
+        end
+
         tb.FocusLost:Connect(function()
             setMutationFilterFromText(tb.Text)
-            -- Update the text box to store the current filter
+            -- Save the text
+            setSetting("mutationFilterText", tb.Text)
             MUTATION.lastText = tb.Text
             if MUTATION.enabled and next(MUTATION.set) then
                 toast("Mutation filter set: "..tb.Text)
@@ -3662,7 +3849,7 @@ local function buildApp()
             autoCollectSection,
             "Require Mutation Match",
             "Only harvest plants whose Variant/Mutation matches the list above",
-            MUTATION.enabled,
+            getSetting("mutationFilterEnabled", false),
             function(on)
                 MUTATION.enabled = on and true or false
                 if on and tb.Text and #tb.Text > 0 then 
@@ -3674,8 +3861,12 @@ local function buildApp()
                 end
                 toast("Require Mutation: "..(MUTATION.enabled and "ON" or "OFF"))
             end,
-            toast
+            toast,
+            "mutationFilterEnabled"
         )
+
+        -- Load mutation filter state on startup
+        MUTATION.enabled = getSetting("mutationFilterEnabled", false)
 
         -- Manual test button for farm detection
         local rowTest = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},autoCollectSection)
@@ -3714,7 +3905,7 @@ local function buildApp()
             autoSellSection,
             "Auto-Sell Inventory",
             "Automatically sell when game shows 'inventory full' message",
-            AUTO_SELL.enabled,
+            getSetting("autoSellEnabled", false),
             function(on)
                 if on then
                     startAutoSell(toast)
@@ -3722,7 +3913,8 @@ local function buildApp()
                     stopAutoSell(toast)
                 end
             end,
-            toast
+            toast,
+            "autoSellEnabled"
         )
 
         -- Manual sell test button
@@ -3743,6 +3935,14 @@ local function buildApp()
                 toast("Sell failed - check console for details")
             end
         end)
+        
+        -- Apply saved settings on startup
+        if getSetting("autoCollectEnabled", false) then
+            AutoStart()
+        end
+        if getSetting("autoSellEnabled", false) then
+            startAutoSell()
+        end
     end
 
     -- Removed legacy GAG Hub page; moved UI Options into Misc page
@@ -3750,7 +3950,11 @@ local function buildApp()
     do
         local P=makePage("Player")
         local GM = groupBox(P.Body, "Movement")
-        makeToggle(GM,"Enable Custom WalkSpeed","Apply your chosen speed",false,function(on) setCustomSpeed(on) end,toast)
+        
+        -- Load saved speed setting
+        SPEED.Chosen = getSetting("walkSpeed", SPEED.Chosen)
+        
+        makeToggle(GM,"Enable Custom WalkSpeed","Apply your chosen speed",getSetting("customSpeedEnabled", false),function(on) setCustomSpeed(on) end,toast,"customSpeedEnabled")
 
         local dragging=false; local prevDrag=true
         local function lockDrag() if not dragging then dragging=true; prevDrag=win.Draggable; win.Draggable=false end end
@@ -3759,16 +3963,39 @@ local function buildApp()
         sliderRow(GM, "WalkSpeed", SPEED.MIN, SPEED.MAX, SPEED.Chosen, function(v)
             SPEED.Chosen=v
             if SPEED.Enabled then applySpeedValue(v) end
-        end, lockDrag, unlockDrag)
+        end, lockDrag, unlockDrag, "walkSpeed")
 
-        makeToggle(GM,"Fly","WASD + E/Q for up/down",false,function(on) setFly(on) end,toast)
-        sliderRow(GM, "Fly Speed", 20, 300, Fly.Speed, function(v) Fly.Speed=v end, lockDrag, unlockDrag)
+        -- Load saved fly speed
+        Fly.Speed = getSetting("flySpeed", Fly.Speed)
+
+        makeToggle(GM,"Fly","WASD + E/Q for up/down",getSetting("flyEnabled", false),function(on) setFly(on) end,toast,"flyEnabled")
+        sliderRow(GM, "Fly Speed", 20, 300, Fly.Speed, function(v) Fly.Speed=v end, lockDrag, unlockDrag, "flySpeed")
 
         local GA = groupBox(P.Body, "Abilities / Utility")
-        makeToggle(GA,"Infinite Jump","Allow jumping mid-air",false,function(on) InfiniteJump.Enabled=on end,toast)
-        makeToggle(GA,"NoClip","Disable collisions on your character",false,function(on) setNoClip(on) end,toast)
-        makeToggle(GA,"Ctrl + Click Teleport","Hold LeftCtrl and click to teleport",false,function(on) Teleport.Enabled=on end,toast)
-    makeToggle(GA,"Anti-AFK","Prevents 20m idle kick (VirtualUser)",false,function(on) setAntiAFK(on) end,toast)
+        makeToggle(GA,"Infinite Jump","Allow jumping mid-air",getSetting("infiniteJumpEnabled", false),function(on) InfiniteJump.Enabled=on end,toast,"infiniteJumpEnabled")
+        makeToggle(GA,"NoClip","Disable collisions on your character",getSetting("noClipEnabled", false),function(on) setNoClip(on) end,toast,"noClipEnabled")
+        makeToggle(GA,"Ctrl + Click Teleport","Hold LeftCtrl and click to teleport",getSetting("teleportEnabled", false),function(on) Teleport.Enabled=on end,toast,"teleportEnabled")
+        makeToggle(GA,"Anti-AFK","Prevents 20m idle kick (VirtualUser)",getSetting("antiAFKEnabled", false),function(on) setAntiAFK(on) end,toast,"antiAFKEnabled")
+        
+        -- Apply saved settings on startup
+        if getSetting("customSpeedEnabled", false) then
+            setCustomSpeed(true)
+        end
+        if getSetting("flyEnabled", false) then
+            setFly(true)
+        end
+        if getSetting("infiniteJumpEnabled", false) then
+            InfiniteJump.Enabled = true
+        end
+        if getSetting("noClipEnabled", false) then
+            setNoClip(true)
+        end
+        if getSetting("teleportEnabled", false) then
+            Teleport.Enabled = true
+        end
+        if getSetting("antiAFKEnabled", false) then
+            setAntiAFK(true)
+        end
     end
 
     -- MISC PAGE (formerly World) ---------------------------------------------
@@ -3777,24 +4004,38 @@ local function buildApp()
 
         -- UI Options (moved from GAG Hub) as a collapsible section
         local U = makeCollapsibleSection(P.Body, "UI Options", false)
-        makeToggle(U, "Compact Sidebar", "Shrink sidebar width", false, function(on)
+        makeToggle(U, "Compact Sidebar", "Shrink sidebar width", getSetting("sidebarCompact", false), function(on)
             setSidebarCompact(on)
-        end, toast)
+        end, toast, "sidebarCompact")
 
         -- Visuals section (collapsible)
         local V = makeCollapsibleSection(P.Body, "Visuals", false)
-        makeToggle(V, "Vibrant Grass Overlay", "Client-only overlay (no duplicates)", false, function(on)
+        makeToggle(V, "Vibrant Grass Overlay", "Client-only overlay (no duplicates)", getSetting("grassOverlayEnabled", false), function(on)
             if on then GO_Start() else GO_Stop() end
-        end, toast)
+        end, toast, "grassOverlayEnabled")
 
         -- Performance section
         local PR = makeCollapsibleSection(P.Body, "Performance", false)
-        makeToggle(PR, "Hide Other Players' Gardens", "Removes other gardens from your view (client-only)", false, function(on)
+        makeToggle(PR, "Hide Other Players' Gardens", "Removes other gardens from your view (client-only)", getSetting("hideOtherGardensEnabled", false), function(on)
             PERF.SetHideOtherGardens(on)
-        end, toast)
-        makeToggle(PR, "Low Graphics Mode", "Disable heavy post effects, shadows, and water features", false, function(on)
+        end, toast, "hideOtherGardensEnabled")
+        makeToggle(PR, "Low Graphics Mode", "Disable heavy post effects, shadows, and water features", getSetting("lowGraphicsEnabled", false), function(on)
             PERF.SetLowGraphics(on)
-        end, toast)
+        end, toast, "lowGraphicsEnabled")
+
+        -- Apply saved visual settings on startup
+        if getSetting("sidebarCompact", false) then
+            setSidebarCompact(true)
+        end
+        if getSetting("grassOverlayEnabled", false) then
+            GO_Start()
+        end
+        if getSetting("hideOtherGardensEnabled", false) then
+            PERF.SetHideOtherGardens(true)
+        end
+        if getSetting("lowGraphicsEnabled", false) then
+            PERF.SetLowGraphics(true)
+        end
 
     -- Beach controls (moved under Visuals)
     local row1 = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},V)
@@ -4341,7 +4582,7 @@ local function buildApp()
             autoFairySection,
             "Auto Submit to Fairy",
             "Automatically submit to fairy fountain when glimmering plant is detected in backpack",
-            AUTO_FAIRY.enabled,
+            getSetting("autoFairyEnabled", false),
             function(on)
                 if on then
                     startAutoFairy(toast)
@@ -4349,8 +4590,14 @@ local function buildApp()
                     stopAutoFairy(toast)
                 end
             end,
-            toast
+            toast,
+            "autoFairyEnabled"
         )
+
+        -- Apply saved fairy settings on startup
+        if getSetting("autoFairyEnabled", false) then
+            startAutoFairy(toast)
+        end
 
         -- Manual test button for fairy submission
         local rowFairyTest = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},autoFairySection)
@@ -4392,20 +4639,20 @@ local function buildApp()
         end)
 
         -- Auto-Restart toggle (merged under Fairy Event)
-        makeToggle(autoFairySection, "Auto-Restart Track", "Every 5s call RestartFairyTrack (EZ)", AUTO_FAIRY.autoRestartEnabled or false, function(on)
+        makeToggle(autoFairySection, "Auto-Restart Track", "Every 5s call RestartFairyTrack (EZ)", getSetting("autoRestartEnabled", false), function(on)
             AUTO_FAIRY.autoRestartEnabled = on
             if on then
                 startAutoRestartLoop(toast)
             else
                 stopAutoRestartLoop()
             end
-        end, toast)
+        end, toast, "autoRestartEnabled")
 
     -- FAIRY WISH (merged into Fairy Event section)
     local wishSection = autoFairySection
-    makeToggle(wishSection, "Auto Make a Wish", "Fires FairyService.MakeFairyWish every 5s", AUTO_FAIRY.wishEnabled, function(on)
+    makeToggle(wishSection, "Auto Make a Wish", "Fires FairyService.MakeFairyWish every 5s", getSetting("autoWishEnabled", false), function(on)
             if on then startAutoWish(toast) else stopAutoWish(toast) end
-        end, toast)
+        end, toast, "autoWishEnabled")
 
     -- (Removed debug: Scan for Wish Buttons)
 
@@ -4563,9 +4810,9 @@ local function buildApp()
             -- otherwise let your existing bounds check run (or simply rely on the scrim)
         end)
 
-        makeToggle(claimSection, "Auto-Claim Rewards", "Chooses preferred reward; else best by rarity/amount", AUTO_FAIRY.claimEnabled, function(on)
+        makeToggle(claimSection, "Auto-Claim Rewards", "Chooses preferred reward; else best by rarity/amount", getSetting("autoClaimEnabled", false), function(on)
             if on then startAutoClaimFairy(toast) else stopAutoClaimFairy(toast) end
-        end, toast)
+        end, toast, "autoClaimEnabled")
 
     local rowClaimNow = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},claimSection)
         corner(rowClaimNow,8); stroke(rowClaimNow,1,THEME.BORDER); pad(rowClaimNow,6,6,6,6)
@@ -4617,6 +4864,18 @@ local function buildApp()
         btnClear.MouseButton1Click:Connect(function()
             clearBeanstalkClientClones(toast)
         end)
+        
+        -- Apply saved fairy settings on startup
+        if getSetting("autoRestartEnabled", false) then
+            AUTO_FAIRY.autoRestartEnabled = true
+            startAutoRestartLoop()
+        end
+        if getSetting("autoWishEnabled", false) then
+            startAutoWish()
+        end
+        if getSetting("autoClaimEnabled", false) then
+            startAutoClaimFairy()
+        end
     end
 
     -- SHOPS PAGE -------------------------------------------------------------
@@ -5413,6 +5672,13 @@ local function buildApp()
     -- Apply glass look after UI is built, then snapshot for fades
     applyGlassLook(app)
     snapshotTransparency(win)
+
+    -- Show settings loaded message
+    if SETTINGS.data and next(SETTINGS.data) then
+        toast("Settings loaded - your preferences have been restored!")
+    else
+        toast("Welcome to GAG Hub! Your settings will be saved automatically.")
+    end
 
     local minimized=false
     local function fadeOutAll(done) tweenTo(win, FADE_DUR, true); task.delay(FADE_DUR, function() if done then done() end end) end
