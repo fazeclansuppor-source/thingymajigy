@@ -6444,6 +6444,7 @@ local function buildApp()
 
                 -- initial teleport
                 forceTo(targetCF)
+                if toast then toast("2 second wait") end
                 warn("[FAIRY] Teleported to TeleportDestination; holding for "..HOLD_SECONDS.."s...")
 
                 -- hold for exactly N seconds, then stop automatically
