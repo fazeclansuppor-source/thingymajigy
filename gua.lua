@@ -5786,7 +5786,7 @@ local function buildApp()
         local rowFairy = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},S)
         corner(rowFairy,8); stroke(rowFairy,1,THEME.BORDER); pad(rowFairy,6,6,6,6)
         local btnFairy = mk("TextButton",{
-            Text="Load Fairy Watcher",
+            Text="Load Fairy Watcher (Patched)",
             Font=FONTS.H, TextSize=16, TextColor3=THEME.TEXT,
             BackgroundColor3=THEME.BG2, Size=UDim2.new(1,0,1,0), AutoButtonColor=false
         }, rowFairy)
@@ -5799,6 +5799,38 @@ local function buildApp()
             if not ok then
                 warn("[Fairy Watcher] ".. tostring(err))
                 toast("Fairy Watcher: error (see Output)")
+            end
+        end)
+
+        -- Row: Fairy Jar Vuln (external)
+        local rowJar = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},S)
+        corner(rowJar,8); stroke(rowJar,1,THEME.BORDER); pad(rowJar,6,6,6,6)
+        local btnJar = mk("TextButton",{
+            Text="Fairy Jar Vuln",
+            Font=FONTS.H, TextSize=16, TextColor3=THEME.TEXT,
+            BackgroundColor3=THEME.BG2, Size=UDim2.new(1,0,1,0), AutoButtonColor=false
+        }, rowJar)
+        corner(btnJar,8); stroke(btnJar,1,THEME.BORDER); hover(btnJar,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnJar.MouseButton1Click:Connect(function()
+            toast("Loading Fairy Jar Vuln…")
+            local ok, err = pcall(function()
+                -- Try a couple of likely script URLs; stop at the first that loads
+                local urls = {
+                    "https://raw.githubusercontent.com/CheesyPoofs346/fairy/refs/heads/main/Jar.lua",
+                }
+                local src
+                for _, u in ipairs(urls) do
+                    local okGet, res = pcall(game.HttpGet, game, u)
+                    if okGet and type(res)=="string" and #res > 25 then src = res; break end
+                end
+                if not src then error("No Fairy Jar script found at known URLs") end
+                local fn, lerr = loadstring(src)
+                if not fn then error(lerr or "loadstring failed") end
+                fn()
+            end)
+            if not ok then
+                warn("[Fairy Jar Vuln] ".. tostring(err))
+                toast("Fairy Jar Vuln: error (see Output)")
             end
         end)
     end
