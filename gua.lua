@@ -6380,47 +6380,100 @@ local function buildApp()
         local btnTp = mk("TextButton",{Text="Teleport to Fairy Island",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowTp)
         corner(btnTp,8); stroke(btnTp,1,THEME.BORDER); hover(btnTp,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnTp.MouseButton1Click:Connect(function()
-            local Players = game:GetService("Players")
-            local Workspace = game:GetService("Workspace")
+            -- Auto TP to FairyIsland.TeleportDestination, hold 2s, then auto-disable
+            -- paste in console
 
-            local function findTarget()
-                local t = Workspace:FindFirstChild("FairyStuff")
-                if not t then return nil end
-                t = t:FindFirstChild("FairyIsland"); if not t then return nil end
-                t = t:FindFirstChild("FairyIsland"); if not t then return nil end
-                t = t:FindFirstChild("Decor"); if not t then return nil end
-                t = t:FindFirstChild("EntryFairyPond"); if not t then return nil end
-                return t
+            local Players     = game:GetService("Players")
+            local RunService  = game:GetService("RunService")
+            local Workspace   = game:GetService("Workspace")
+
+            local LP = Players.LocalPlayer
+            local HOLD_SECONDS = 2.0            -- how long to fight the server before disabling
+            local LIFT_Y       = 3               -- lift above the TeleportDestination to avoid floor clipping
+
+            -- --- helpers ---
+            local function HRP()
+                local c = LP.Character or LP.CharacterAdded:Wait()
+                local h = c:FindFirstChild("HumanoidRootPart")
+                while not h do
+                    h = c:FindFirstChild("HumanoidRootPart")
+                    task.wait(0.05)
+                end
+                return h
             end
 
-            local target = findTarget()
-            if not target then
-                if toast then toast("Fairy Island not found in Workspace/FairyStuff. Click the bring button first.") end
-                return
+            local function findDest()
+                local node = Workspace
+                node = node:FindFirstChild("Interaction"); if not node then return nil end
+                node = node:FindFirstChild("UpdateItems"); if not node then return nil end
+                node = node:FindFirstChild("FairyIsland"); if not node then return nil end
+                node = node:FindFirstChild("FairyIsland"); if not node then return nil end
+                node = node:FindFirstChild("Decor"); if not node then return nil end
+                node = node:FindFirstChild("EntryFairyPond"); if not node then return nil end
+                if node:IsA("BasePart") then return node end
+                if node:IsA("Model") then
+                    local pp = node.PrimaryPart or node:FindFirstChildWhichIsA("BasePart", true)
+                    return pp
+                end
+                return nil
             end
 
-            local plr = Players.LocalPlayer
-            local char = plr and plr.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then
-                if toast then toast("No HumanoidRootPart; spawn in first") end
-                return
+            local function waitForDest()
+                local dest = findDest()
+                while not dest do
+                    task.wait(0.25)
+                    dest = findDest()
+                end
+                return dest
             end
 
-            local cf
-            if target:IsA("BasePart") then
-                cf = target.CFrame + Vector3.new(0,3,0)
-            elseif target:IsA("Model") then
-                local pp = target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart", true)
-                if pp then cf = pp.CFrame + Vector3.new(0,3,0) end
-            end
-            if not cf then
-                if toast then toast("Teleport target isn’t a part; can’t teleport") end
-                return
+            local function forceTo(cf)
+                local h = HRP()
+                -- zero velocities to reduce rubber-banding while holding
+                pcall(function()
+                    h.AssemblyLinearVelocity  = Vector3.new()
+                    h.AssemblyAngularVelocity = Vector3.new()
+                end)
+                h.CFrame = cf
             end
 
-            hrp.CFrame = cf
-            if toast then toast("Teleported to Fairy Island") end
+            -- --- main ---
+            task.spawn(function()
+                local dest = waitForDest()
+                local targetCF = dest.CFrame + Vector3.new(0, LIFT_Y, 0)
+
+                -- initial teleport
+                forceTo(targetCF)
+                warn("[FAIRY] Teleported to TeleportDestination; holding for "..HOLD_SECONDS.."s...")
+
+                -- hold for exactly N seconds, then stop automatically
+                local t0 = tick()
+                local holdConnRS, holdConnHB
+
+                local function shouldHold()
+                    return (tick() - t0) <= HOLD_SECONDS
+                end
+
+                holdConnRS = RunService.RenderStepped:Connect(function()
+                    if shouldHold() then
+                        forceTo(targetCF)
+                    else
+                        if holdConnRS then holdConnRS:Disconnect() end
+                    end
+                end)
+
+                -- optional: double up on Heartbeat too (helps against some server pulls)
+                holdConnHB = RunService.Heartbeat:Connect(function()
+                    if not shouldHold() then
+                        if holdConnHB then holdConnHB:Disconnect() end
+                    end
+                end)
+
+                -- wait out the hold, then announce disabled
+                task.delay(HOLD_SECONDS, function()
+                    warn("[FAIRY] Hold disabled automatically after "..HOLD_SECONDS.."s.")
+                end)
+            end)
         end)
         
         -- Apply saved fairy settings on startup
