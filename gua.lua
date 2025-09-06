@@ -1,4 +1,8 @@
--- GAG HUB | v1.0
+-- GAG HUB | v1.5.5 (+ World & Scripts tabs)
+-- Adds:
+--  • World tab: Vibrant Grass Overlay (toggle) and Beach (Build/Clear/Print)
+--  • Scripts tab: "Load Infinite Yield" button (safe pcall + multi-fetch fallback)
+-- Keeps: toast, RightCtrl minimize/restore, 0.6s fade, slider clamp, player utils, plant collector.
 
 local Players            = game:GetService("Players")
 local CoreGui            = game:GetService("CoreGui")
