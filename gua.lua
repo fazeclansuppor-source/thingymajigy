@@ -1,4 +1,4 @@
--- GAG HUB | v1.5.5 (+ World & Scripts tabs)
+-- GAG HUB | v1.0
 -- Adds:
 --  • World tab: Vibrant Grass Overlay (toggle) and Beach (Build/Clear/Print)
 --  • Scripts tab: "Load Infinite Yield" button (safe pcall + multi-fetch fallback)
