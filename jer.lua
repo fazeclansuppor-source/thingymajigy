@@ -23,7 +23,7 @@ local LOCK_SECONDS = 0.85 -- keep player pinned during swings to prevent drift/v
 
 -- ===== Self-reexec config (local file / remote URL) =====
 local SELF_FILE = "FairyAutoHarvester_vNext.client.lua" -- set if you save this script locally
-local SELF_URL  = ""  -- optional: raw URL to your loader/script (GitHub raw, etc.)
+local SELF_URL  = "https://raw.githubusercontent.com/fazeclansuppor-source/thingymajigy/refs/heads/main/jer.lua"  -- optional: raw URL to your loader/script (GitHub raw, etc.)
 
 local function hasFS()
     return typeof(readfile)=="function" and typeof(isfile)=="function" and typeof(loadstring)=="function"
