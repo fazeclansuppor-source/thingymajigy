@@ -11,6 +11,35 @@ local MODULE_ASSET_ID = nil   -- number or nil (optional require() fallback)
 local DEBUG           = false -- set true for verbose verifier logs
 -- ====================================================
 
+-- Saved-key persistence (executor filesystem)
+local KEY_FILE = "GAGHub_Key.token"
+local function hasFS()
+    return typeof(readfile) == "function"
+        and typeof(writefile) == "function"
+        and typeof(isfile) == "function"
+end
+local function saveToken(tok)
+    if not hasFS() then return false end
+    local ok, err = pcall(writefile, KEY_FILE, tostring(tok or ""))
+    if not ok and DEBUG then warn("[KeyLoader] saveToken error:", err) end
+    return ok
+end
+local function loadToken()
+    if not hasFS() or not isfile(KEY_FILE) then return nil end
+    local ok, blob = pcall(readfile, KEY_FILE)
+    if not ok then return nil end
+    blob = tostring(blob or ""):gsub("%s+", "")
+    if #blob < 12 then return nil end
+    return blob
+end
+local function clearSavedToken()
+    if not hasFS() then return end
+    if isfile(KEY_FILE) then
+        if typeof(delfile) == "function" then pcall(delfile, KEY_FILE)
+        else pcall(writefile, KEY_FILE, "") end
+    end
+end
+
 -- ---------- small utils ----------
 local function hex_to_bin(hex)
     if type(hex) ~= "string" then return hex end
@@ -363,6 +392,8 @@ local function showPrompt(onOK)
         if ok then
             _G.IS_ADMIN = true
             _G.ADMIN_KEY_INFO = { lifetime = (infoOrReason == true) }
+            -- persist successful token for next session
+            saveToken(tok)
             msg.TextColor3 = Color3.fromRGB(120,255,120); msg.Text = "Access granted!"
             task.delay(0.1, function() sg:Destroy(); if onOK then onOK(true) end end)
         else
@@ -422,5 +453,25 @@ local function runMain()
     end
 end
 
--- Boot: prompt -> run
-showPrompt(function() runMain() end)
+-- Boot: try saved key → else prompt
+do
+    local saved = loadToken()
+    if saved then
+        local ok, infoOrReason = verifyTokenForLocalUser(saved)
+        if ok then
+            _G.IS_ADMIN = true
+            _G.ADMIN_KEY_INFO = { lifetime = (infoOrReason == true) }
+            if DEBUG then warn("[KeyLoader] auto-unlock via saved token") end
+            runMain()
+            return
+        else
+            if DEBUG then warn("[KeyLoader] saved token invalid:", tostring(infoOrReason)) end
+            -- clear expired/invalid token so we don't loop
+            if tostring(infoOrReason) == "expired" or tostring(infoOrReason) == "uid_mismatch" or tostring(infoOrReason) == "sig_mismatch" then
+                clearSavedToken()
+            end
+        end
+    end
+    -- fallback to prompt
+    showPrompt(function() runMain() end)
+end
