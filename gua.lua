@@ -1,8 +1,4 @@
--- GAG HUB | v1.5.5 (+ World & Scripts tabs)
--- Adds:
---  • World tab: Vibrant Grass Overlay (toggle) and Beach (Build/Clear/Print)
---  • Scripts tab: "Load Infinite Yield" button (safe pcall + multi-fetch fallback)
--- Keeps: toast, RightCtrl minimize/restore, 0.6s fade, slider clamp, player utils, plant collector.
+-- GAG HUB | v1.0
 
 local Players            = game:GetService("Players")
 local CoreGui            = game:GetService("CoreGui")
@@ -13,6 +9,117 @@ local CollectionService  = game:GetService("CollectionService")
 local RunService         = game:GetService("RunService")
 local Workspace          = game:GetService("Workspace")
 local LocalPlayer        = Players.LocalPlayer
+
+-- === SeedPack debug watchers ===
+do
+    local ok, RS = pcall(function() return game:GetService("ReplicatedStorage") end)
+    if ok and RS then
+        local success, SP_ROOT = pcall(function()
+            return RS:WaitForChild("GameEvents"):WaitForChild("SeedPack")
+        end)
+        if success and SP_ROOT then
+            local SPIN   = SP_ROOT:WaitForChild("SpinFinished")  -- client -> server
+            local RESULT = SP_ROOT:WaitForChild("Result")        -- server -> client
+
+            -- Log RESULT and provide a fallback chain in case the hook is unavailable
+            if not _G.__SP_resultDbg then
+                _G.__SP_resultDbg = RESULT.OnClientEvent:Connect(function(...)
+                    warn(('[SeedPack][DEBUG] Result.OnClientEvent @ %s, args(%d)')
+                        :format(os.date('%X'), select('#', ...)))
+                    -- Fallback chain: reopen after 1s using the same full flow if available
+                    task.spawn(function()
+                        task.wait(1.0)
+                        local gv = _G
+                        if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                            warn('[SeedPack][DEBUG] Auto Seed Packs OFF; not reopening on Result')
+                            return
+                        end
+                        if type(gv.__SP_openOne) == 'function' then
+                            warn('[SeedPack][DEBUG] RESULT fallback: calling __SP_openOne()')
+                            local ok, err = pcall(gv.__SP_openOne)
+                            if not ok then warn('[SeedPack][DEBUG] RESULT fallback __SP_openOne error:', err) end
+                        else
+                            -- Direct-remote fallback
+                            local key = (gv.AUTO_PACKS and type(gv.AUTO_PACKS.selectedKey)=='string' and #gv.AUTO_PACKS.selectedKey>0) and gv.AUTO_PACKS.selectedKey or gv.__SP_lastKey or 'Enchanted Seed Pack'
+                            local opener
+                            for _, child in ipairs(SP_ROOT:GetChildren()) do
+                                if child:IsA('RemoteEvent') and child.Name ~= 'Result' and child.Name ~= 'SpinFinished' then opener = child; break end
+                            end
+                            if opener and opener.FireServer then
+                                if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                                    warn('[SeedPack][DEBUG] Auto Seed Packs OFF; aborting direct-remote fallback on Result')
+                                    return
+                                end
+                                warn('[SeedPack][DEBUG] RESULT fallback: firing opener remote:', opener.Name, 'key=', key)
+                                pcall(function() opener:FireServer(key) end)
+                            else
+                                warn('[SeedPack][DEBUG] RESULT fallback failed: no opener remote under SeedPack')
+                            end
+                        end
+                    end)
+                end)
+            end
+
+            -- Hook outgoing FireServer for SpinFinished (requires exploit APIs)
+            if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function" then
+                if not _G.__SP_namecallHooked then
+                    _G.__SP_namecallHooked = true
+                    local old; old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                        local method = tostring(getnamecallmethod())
+                        if method == "FireServer" and typeof(self) == "Instance" and self == SPIN then
+                            warn(('[SeedPack][DEBUG] SpinFinished:FireServer @ %s, args(%d)')
+                                :format(os.date('%X'), select('#', ...)))
+                            -- Perfect place to queue the next open
+                            local gv = _G
+                            if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                                warn('[SeedPack][DEBUG] Auto Seed Packs OFF; not queueing next open')
+                            elseif rawget(gv, 'openNextAfter') then
+                                warn('[SeedPack][DEBUG] Queueing next open in 1.0s via openNextAfter')
+                                gv.openNextAfter(1.0)
+                            elseif type(gv.__SP_openOne) == 'function' then
+                                warn('[SeedPack][DEBUG] Queueing next open in 1.0s via __SP_openOne (fallback)')
+                                task.spawn(function()
+                                    task.wait(1.0)
+                                    if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                                        warn('[SeedPack][DEBUG] Auto Seed Packs OFF at invoke; aborting __SP_openOne fallback')
+                                        return
+                                    end
+                                    local ok, err = pcall(gv.__SP_openOne)
+                                    if not ok then warn('[SeedPack][DEBUG] __SP_openOne fallback error:', err) end
+                                end)
+                            else
+                                warn('[SeedPack][DEBUG] No helper found; doing direct-remote fallback in 1.0s')
+                                task.spawn(function()
+                                    task.wait(1.0)
+                                    if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                                        warn('[SeedPack][DEBUG] Auto Seed Packs OFF at invoke; aborting direct-remote fallback')
+                                        return
+                                    end
+                                    local key = (gv.AUTO_PACKS and type(gv.AUTO_PACKS.selectedKey)=='string' and #gv.AUTO_PACKS.selectedKey>0) and gv.AUTO_PACKS.selectedKey or gv.__SP_lastKey or 'Enchanted Seed Pack'
+                                    local opener
+                                    for _, child in ipairs(SP_ROOT:GetChildren()) do
+                                        if child:IsA('RemoteEvent') and child.Name ~= 'Result' and child.Name ~= 'SpinFinished' then opener = child; break end
+                                    end
+                                    if opener and opener.FireServer then
+                                        warn('[SeedPack][DEBUG] Fallback firing opener remote:', opener.Name, 'key=', key)
+                                        pcall(function() opener:FireServer(key) end)
+                                    else
+                                        warn('[SeedPack][DEBUG] Fallback failed: no opener remote found under SeedPack')
+                                    end
+                                end)
+                            end
+                        end
+                        return old(self, ...)
+                    end))
+                    warn("[SeedPack] __namecall hook armed")
+                end
+            else
+                warn("[SeedPack] __namecall hook NOT available; relying on Result.OnClientEvent")
+            end
+        end
+    end
+end
+-- === end debug watchers ===
 
 -- ============================== SETTINGS PERSISTENCE ==============================
 local SETTINGS = {
@@ -144,6 +251,12 @@ local function initializeSettings()
         noClipEnabled = false,
         teleportEnabled = false,
         antiAFKEnabled = false,
+        
+    -- Auto Seed Packs
+    autoSeedPacksEnabled = false,
+    seedPackSelectedKey = "",
+    seedPacksSkipViaRemote = true,
+    seedPacksDelay = 0.5,
         
         -- Auto Shops
         autoShopEnabled = false,
@@ -1203,6 +1316,16 @@ local AUTO_EGG = {
     _inFlightGlobal = 0
 }
 
+-- ============================== AUTO-SEED PACKS ===========================
+local AUTO_PACKS = {
+    enabled = false,
+    _task = nil,
+    _busy = false,
+    selectedKey = "",
+    delay = 0.5,           -- seconds between open cycles
+    skipViaRemote = true,  -- prefer firing SpinFinished remote
+}
+
 -- Function to get list of glimmering plants in backpack (for tracking)
 local function getGlimmeringPlantNames()
     local glimmeringPlants = {}
@@ -1289,6 +1412,1184 @@ local function hasGlimmeringInBackpack()
     return false
 end
 
+-- ========================== AUTO SEED PACKS CORE ===========================
+local SeedPacks_Remote
+local SeedPacks_Folder
+print("=== INITIALIZING SEED PACK REMOTE ===")
+pcall(function()
+    print("Looking for ReplicatedStorage...")
+    local rs = ReplicatedStorage
+    if rs then
+        print("ReplicatedStorage found")
+        print("Looking for GameEvents...")
+        local ge = rs:WaitForChild("GameEvents", 5)
+        if ge then
+            print("GameEvents found")
+            print("Looking for SeedPack...")
+            SeedPacks_Folder = ge:WaitForChild("SeedPack", 5)
+            if SeedPacks_Folder then
+                print("SeedPack folder found!")
+                print("Folder name:", SeedPacks_Folder.Name)
+                print("Folder class:", SeedPacks_Folder.ClassName)
+                print("Children in SeedPack folder:")
+                
+                -- List all children first
+                for _, child in ipairs(SeedPacks_Folder:GetChildren()) do
+                    print("  -", child.Name, "(" .. child.ClassName .. ")")
+                    if child:IsA("RemoteEvent") then
+                        print("    ^ This is a RemoteEvent!")
+                    end
+                end
+                
+                -- Try to find specific remote names first
+                local remoteNames = {"Open", "OpenPack", "SpinPack", "UsePack", "ActivatePack"}
+                for _, remoteName in ipairs(remoteNames) do
+                    local remote = SeedPacks_Folder:FindFirstChild(remoteName)
+                    if remote and remote:IsA("RemoteEvent") then
+                        print("Found specific remote:", remoteName)
+                        SeedPacks_Remote = remote
+                        break
+                    end
+                end
+                
+                -- If no specific remote found, use any RemoteEvent
+                if not SeedPacks_Remote then
+                    print("No specific remote found, looking for any RemoteEvent...")
+                    for _, child in ipairs(SeedPacks_Folder:GetChildren()) do
+                        if child:IsA("RemoteEvent") then
+                            print("Using RemoteEvent:", child.Name)
+                            SeedPacks_Remote = child
+                            break
+                        end
+                    end
+                end
+                
+                if SeedPacks_Remote then
+                    print("SUCCESS: SeedPacks_Remote set to:", SeedPacks_Remote.Name)
+                else
+                    print("ERROR: No RemoteEvent found in SeedPack folder")
+                end
+            else
+                print("ERROR: SeedPack folder not found in GameEvents")
+            end
+        else
+            print("ERROR: GameEvents not found in ReplicatedStorage")
+        end
+    else
+        print("ERROR: ReplicatedStorage not found")
+    end
+end)
+print("SeedPacks_Remote result:", SeedPacks_Remote)
+print("SeedPacks_Folder result:", SeedPacks_Folder)
+print("=== SEED PACK REMOTE INIT COMPLETE ===")
+
+-- === Seed Pack RESULT detector (standalone) ===
+do
+    local RS = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local LP = Players.LocalPlayer
+    local PG = LP:WaitForChild("PlayerGui")
+
+    -- tear down any prior detector
+    local GV = (getgenv and getgenv()) or _G
+    GV.__SP_DETECT = GV.__SP_DETECT or {}
+    if GV.__SP_DETECT.conn then pcall(function() GV.__SP_DETECT.conn:Disconnect() end) end
+
+    -- seed pack data (for index->name)
+    local SeedPackData = require(RS:WaitForChild("Data"):WaitForChild("SeedPackData"))
+
+    -- fast lookup of all known item names (for UI fallback)
+    local ALL_NAMES = {}
+    do
+        for packName, pack in pairs(SeedPackData.Packs or {}) do
+            local items = pack and pack.Items
+            if items then
+                for i, def in ipairs(items) do
+                    local n = def and (def.DisplayName or def.Name or def.RewardId or ("Index#"..i))
+                    if n then ALL_NAMES[string.lower(n)] = n end
+                end
+            end
+        end
+    end
+
+    local function itemNameBy(packName, index)
+        local pack = (SeedPackData.Packs or {})[packName]
+        local items = pack and pack.Items
+        if items and items[tonumber(index)] then
+            local d = items[tonumber(index)]
+            return d.DisplayName or d.Name or d.RewardId or ("Index#"..tostring(index))
+        end
+        return nil
+    end
+
+    -- scan the roll GUI for any label that matches a known item name
+    local function detectFromUI(timeout)
+        local t0 = time()
+        while time() - t0 < (timeout or 1.0) do
+            for _, gui in ipairs(PG:GetChildren()) do
+                if gui:IsA("ScreenGui") and gui.Enabled ~= false then
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") then
+                            local txt = tostring(d.Text or "")
+                            local norm = string.lower(txt)
+                            if ALL_NAMES[norm] then
+                                return ALL_NAMES[norm]
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.05)
+        end
+    end
+
+    -- best guess for current pack name:
+    -- 1) payload.pack or payload.packName (if server sends it)
+    -- 2) your hub's selection (AUTO_PACKS.selectedKey) if present
+    -- 3) fallback to the Enchanted Seed Pack
+    local function resolvePackName(payload)
+        local t = typeof(payload)=="table" and payload or {}
+        local p = t.pack or t.packName or t.Pack or t.PACK
+        if p and typeof(p)=="string" and #p>0 then return p end
+        if rawget(_G, "AUTO_PACKS") and type(_G.AUTO_PACKS.selectedKey)=="string" and #_G.AUTO_PACKS.selectedKey>0 then
+            return _G.AUTO_PACKS.selectedKey
+        end
+        return "Enchanted Seed Pack"
+    end
+
+    local resultRemote = RS:WaitForChild("GameEvents"):WaitForChild("SeedPack"):WaitForChild("Result")
+    GV.__SP_DETECT.conn = resultRemote.OnClientEvent:Connect(function(payload)
+        local idx = nil
+        if typeof(payload)=="table" then
+            idx = payload.resultIndex or payload.index or payload.i
+        elseif typeof(payload)=="number" then
+            idx = payload
+        end
+
+        local packName = resolvePackName(payload)
+        local name = idx and itemNameBy(packName, idx) or nil
+
+        if not name then
+            -- fallback: peek the roll UI briefly
+            name = detectFromUI(1.0)
+        end
+
+        -- final fallback if still unknown
+        if not name then
+            name = idx and ("Index#"..tostring(idx)) or "<unknown>"
+        end
+
+        print(("[SeedPack] RESULT: %s"):format(name))
+        if GV.SeedPackOnResult then
+            -- optional user callback: function(name, index, packName)
+            pcall(GV.SeedPackOnResult, name, tonumber(idx), packName)
+        end
+    end)
+
+    print("[SeedPack] Detector armed (Result → name).")
+end
+-- === end detector ===
+
+-- === Webhook helpers and wiring ===
+do
+    local HttpService = game:GetService("HttpService")
+    local RS = game:GetService("ReplicatedStorage")
+    local SeedPackData = nil
+    pcall(function()
+        SeedPackData = require(RS:WaitForChild("Data"):WaitForChild("SeedPackData"))
+    end)
+
+    local function _httpRequest(opts)
+        local req = (syn and syn.request)
+                    or (http_request)
+                    or (request)
+                    or (http and http.request)
+        if not req then return false, "no http request function available" end
+        local ok, res = pcall(req, opts)
+        if not ok then return false, tostring(res) end
+        local sc = res and (res.StatusCode or res.Status or res.status_code)
+        return (type(sc) == "number" and sc >= 200 and sc < 300), res
+    end
+
+    local function _postJson(url, tbl)
+        if type(url) ~= "string" or #url < 8 then return false, "invalid url" end
+        local body
+        local ok, err = pcall(function() body = HttpService:JSONEncode(tbl) end)
+        if not ok then return false, err end
+        return _httpRequest({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body
+        })
+    end
+
+    -- Calculate chance percent for a given pack and item index.
+    -- Supports explicit percent/chance fields or weight-based distributions.
+    local function _calcChancePercent(packName, idx)
+        if not SeedPackData then return nil end
+        local i = tonumber(idx)
+        if not i then return nil end
+        local packs = (SeedPackData and SeedPackData.Packs) or {}
+        local pack = packs and packs[packName]
+        local items = pack and pack.Items
+        if not (items and items[i]) then return nil end
+        local def = items[i]
+
+        local function pickNumber(t, keys)
+            for _, k in ipairs(keys) do
+                local v = t[k]
+                if type(v) == "number" then return v end
+            end
+            return nil
+        end
+
+        -- Prefer explicit percentages/chances if provided
+        local percentRaw = pickNumber(def, {
+            "Percent","percent","Chance","chance","Probability","probability","DropRate","dropRate","DropChance","dropChance"
+        })
+        if type(percentRaw) == "number" then
+            local p = percentRaw
+            if p <= 1 then p = p * 100 end            -- treat 0..1 as fraction
+            if p > 100 and p <= 10000 then p = p/100 end -- treat 0..10000 as basis points
+            if p < 0 then p = 0 end
+            if p > 100 then p = 100 end
+            return p
+        end
+
+        -- Otherwise, compute via weights
+        local w = pickNumber(def, {"Weight","weight","W","w","RarityWeight","rarityWeight"})
+        if type(w) == "number" then
+            local total = 0
+            for _, d in ipairs(items) do
+                local wi = pickNumber(d, {"Weight","weight","W","w","RarityWeight","rarityWeight"}) or 0
+                total = total + wi
+            end
+            if total > 0 then
+                return (w / total) * 100
+            end
+        end
+        return nil
+    end
+
+    local function sendSeedpackWebhook(url, name, idx, pack)
+        local chancePct = _calcChancePercent(pack, idx)
+        local chanceStr = chancePct and string.format("%.2f%%", chancePct) or "?"
+        local embed = {
+            title = "Seed Pack Opened",
+            description = string.format("You got: **%s**", tostring(name or "<unknown>")),
+            color = 0x5A9EC9,
+            fields = {
+                { name = "Pack",   value = tostring(pack or "Unknown"), inline = true },
+                { name = "Chance", value = chanceStr,                    inline = true },
+            },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+        local payload = { embeds = { embed }, username = "GAG Hub" }
+        return _postJson(url, payload)
+    end
+
+    -- Chain into SeedPack result callback to emit webhooks when toggled on
+    local GV = (getgenv and getgenv()) or _G
+    local prev = GV.SeedPackOnResult
+    GV.SeedPackOnResult = function(name, idx, packName)
+        local enabled = (type(getSetting) == 'function') and getSetting("webhookEnabled", false)
+        local seedOn  = (type(getSetting) == 'function') and getSetting("webhookSeedpack", false)
+        local url     = (type(getSetting) == 'function') and getSetting("webhookUrl", "") or ""
+        if enabled and seedOn and type(url) == "string" and #url > 0 then
+            local ok, res = sendSeedpackWebhook(url, name, idx, packName)
+            if not ok then warn("[Webhook] send failed:", res) end
+        end
+        if type(prev) == 'function' then
+            pcall(prev, name, idx, packName)
+        end
+    end
+end
+-- === end webhooks ===
+
+    -- ================== SeedPackAssist ==================
+    -- Skip-on-open + chain-on-SpinFinished (0.5s)
+    -- Keeps your existing opener. Exposes:
+    --   SeedPackAssist.arm() / disarm()
+    --   SeedPackAssist.skipNow()
+    --   SeedPackAssist.setOpenCallback(fn)
+
+    do
+        local RS  = game:GetService("ReplicatedStorage")
+        local LP  = game:GetService("Players").LocalPlayer
+        local PG  = LP:WaitForChild("PlayerGui")
+        local VIM = game:GetService("VirtualInputManager")
+        local CAM = workspace.CurrentCamera
+
+        local SPF        = RS:WaitForChild("GameEvents"):WaitForChild("SeedPack")
+        local REM_SPIN   = SPF:FindFirstChild("SpinFinished")  -- we only WATCH this for chaining
+        local REM_RESULT = SPF:FindFirstChild("Result")        -- fallback chain if hooking not available
+
+        -- ----- opener (uses your globals unless you provide a callback) -----
+        local API = rawget(getgenv() or _G, "SeedPackAssist") or {}
+        local _openCallback = API._openCallback
+
+        local function selectedKey()
+            local ap = rawget(_G, "AUTO_PACKS")
+            local key = (ap and type(ap.selectedKey)=="string" and #ap.selectedKey>0) and ap.selectedKey or nil
+            if not key or #key==0 then
+                key = rawget(_G, "__SP_lastKey")
+            end
+            return key or "Enchanted Seed Pack"
+        end
+            local function findOpener()
+                -- Prefer cached global or previously discovered local if present
+                local r = rawget(_G, "SeedPacks_Remote") or (rawget(_G, "SeedPacks_Remote") and _G.SeedPacks_Remote) or (rawget(_G, "SeedPacks_Remote"))
+                if not r then
+                    -- try local discovered remote in this chunk if it exists
+                    pcall(function()
+                        if SeedPacks_Remote then r = SeedPacks_Remote end
+                    end)
+                end
+                -- named candidates
+                r = r or SPF:FindFirstChild("Open")
+                            or SPF:FindFirstChild("OpenPack")
+                            or SPF:FindFirstChild("SpinPack")
+                            or SPF:FindFirstChild("UsePack")
+                            or SPF:FindFirstChild("ActivatePack")
+                -- generic fallback: first RemoteEvent that isn't Result/SpinFinished
+                if not r then
+                    for _, child in ipairs(SPF:GetChildren()) do
+                        if child:IsA("RemoteEvent") and child.Name ~= "Result" and child.Name ~= "SpinFinished" then
+                            r = child
+                            break
+                        end
+                    end
+                end
+                if r then (getgenv() or _G).SeedPacks_Remote = r end
+                return r
+            end
+        local function callOpenNow()
+            -- Respect master toggle
+            local gvToggle = (getgenv and getgenv()) or _G
+            if not (gvToggle and gvToggle.AUTO_PACKS and gvToggle.AUTO_PACKS.enabled) then
+                print('[SeedPackAssist] AUTO_PACKS disabled; not opening')
+                return
+            end
+            if type(_openCallback) == "function" then
+                local ok, err = pcall(_openCallback)
+                if not ok then warn("[SeedPackAssist] open callback error:", err) end
+                return
+            end
+            local r, key = findOpener(), selectedKey()
+                if r and r.FireServer then
+                    pcall(function() r:FireServer(key) end)
+                    (getgenv() or _G).__SP_lastKey = key
+                    print("[SeedPackAssist] Re-opened:", key)
+                    -- force early skip for the reopened roll as well
+                    task.delay(0.05, function()
+                        pcall(function()
+                            local api = (getgenv() or _G).SeedPackAssist
+                            if api and api.skipNow then api.skipNow() end
+                        end)
+                    end)
+            else
+                warn("[SeedPackAssist] No opener RemoteEvent found.")
+            end
+        end
+            local function openNextAfter(sec)
+                local delaySec = sec or 1.0
+                print(string.format('[SeedPackAssist] Scheduling next open in %.2fs', delaySec))
+                task.delay(delaySec, function()
+                    -- Respect master toggle at invoke time
+                    local gvToggle2 = (getgenv and getgenv()) or _G
+                    if not (gvToggle2 and gvToggle2.AUTO_PACKS and gvToggle2.AUTO_PACKS.enabled) then
+                        print('[SeedPackAssist] AUTO_PACKS disabled at invoke; aborting scheduled open')
+                        return
+                    end
+                    local gv = (getgenv() or _G)
+                    if type(gv.__SP_openOne) == 'function' then
+                        print('[SeedPackAssist] Invoking __SP_openOne()')
+                        gv.__SP_openOne()
+                    else
+                        print('[SeedPackAssist] __SP_openOne not found; falling back to callOpenNow()')
+                        callOpenNow()
+                    end
+                end)
+        end
+        -- Expose a simple global so external debug watchers can chain
+        (getgenv() or _G).openNextAfter = openNextAfter
+
+        -- ----- robust UI skipping (no SpinFinished used for skipping) -----
+        local function isSkipish(s)
+            s = string.lower(tostring(s or ""))
+            return s:find("skip",1,true) or s:find("continue",1,true) or s:find("next",1,true)
+        end
+        local function clickAt(x, y)
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            task.wait()
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end
+        local function clickCenter(guiObject)
+            local p,s = guiObject.AbsolutePosition, guiObject.AbsoluteSize
+            clickAt(p.X + s.X/2, p.Y + s.Y/2)
+        end
+        local function findSkipBtn()
+            for _, gui in ipairs(PG:GetChildren()) do
+                if gui:IsA("ScreenGui") and gui.Enabled ~= false then
+                    -- exact child named "Skip"
+                    local named = gui:FindFirstChild("Skip", true)
+                    if named and named:IsA("GuiButton") then return named end
+                    -- any GuiButton whose text/name looks like Skip
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if d:IsA("GuiButton") then
+                            local t = d.Text or d.Name
+                            if isSkipish(t) then return d end
+                        elseif d:IsA("Frame") or d:IsA("ImageLabel") then
+                            -- frames with a child label "SKIP"
+                            local lbl = d:FindFirstChildWhichIsA("TextLabel", true)
+                            if lbl and isSkipish(lbl.Text) then
+                                local btnParent = (d:IsA("GuiButton") and d) or d:FindFirstChildWhichIsA("GuiButton", true)
+                                return btnParent or lbl
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local function skipBurst(seconds)
+            local total = tonumber(seconds) or 1.2
+            local untilT = time() + total
+            local triedRemote = false
+            local flip = false
+            repeat
+                -- 1) Try to find an obvious skip/continue/next button and click it
+                local b = findSkipBtn()
+                if b then
+                    clickCenter(b)
+                else
+                    -- 2) Heuristic clicks + key taps every tick to dismiss animations
+                    if CAM then
+                        local vw, vh = CAM.ViewportSize.X, CAM.ViewportSize.Y
+                        local x = flip and math.floor(vw*0.9) or math.floor(vw*0.5)
+                        local y = flip and math.floor(vh*0.9) or math.floor(vh*0.5)
+                        clickAt(x, y)
+                        flip = not flip
+                    end
+                    pcall(function()
+                        VIM:SendKeyEvent(true, Enum.KeyCode.Space,  false, game); VIM:SendKeyEvent(false, Enum.KeyCode.Space,  false, game)
+                        VIM:SendKeyEvent(true, Enum.KeyCode.Return, false, game); VIM:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+                    end)
+                    -- 3) As a last resort halfway through, try firing SpinFinished remote once (if present)
+                    if not triedRemote and (time() + 0.0001) >= (untilT - total/2) then
+                        triedRemote = true
+                        pcall(function()
+                            local RS = game:GetService('ReplicatedStorage')
+                            local SP = RS:FindFirstChild('GameEvents') and RS.GameEvents:FindFirstChild('SeedPack')
+                            local SPIN = SP and SP:FindFirstChild('SpinFinished')
+                            if SPIN and SPIN.FireServer then
+                                SPIN:FireServer()
+                            end
+                        end)
+                    end
+                end
+                task.wait(0.06)
+            until time() >= untilT
+        end
+
+            local _guiConn, _resConn, _hooked, _fallback
+            local _lastChainAt = 0
+            local function _scheduleChain(sec)
+                local now = time()
+                if now - _lastChainAt < 0.6 then
+                    -- prevent double-open when both hook and Result fire
+                    return
+                end
+                _lastChainAt = now
+                -- Respect master toggle
+                local gv = (getgenv and getgenv()) or _G
+                if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                    print('[SeedPackAssist] AUTO_PACKS disabled; skip chaining')
+                    return
+                end
+                openNextAfter(sec or 1.0)
+            end
+
+            local function _watchUIVanishAndChain()
+                task.spawn(function()
+                    -- wait until skip-like UI no longer present, then schedule chain as safety
+                    local timeoutAt = time() + 30 -- don't wait forever
+                    while time() < timeoutAt do
+                        local b = findSkipBtn()
+                        if not b then break end
+                        task.wait(0.1)
+                    end
+                    -- schedule chain (dedup protects against double-open if hook already did it)
+                    _scheduleChain(1.0)
+                end)
+            end
+
+            local function armSkipOnOpen()
+            if _guiConn then _guiConn:Disconnect(); _guiConn=nil end
+            -- If already visible, skip now
+                if findSkipBtn() then
+                    task.defer(function()
+                        skipBurst(0.6)
+                        _watchUIVanishAndChain()
+                    end)
+                end
+            _guiConn = PG.DescendantAdded:Connect(function(inst)
+                if (inst:IsA("GuiButton") and isSkipish(inst.Text or inst.Name))
+                        or (inst:IsA("TextLabel") and isSkipish(inst.Text))
+                        or (string.lower(inst.Name or "")=="skip")
+                then
+                    task.wait(0.05) -- let UI settle
+                        skipBurst(0.6)
+                        _watchUIVanishAndChain()
+                end
+            end)
+        end
+
+                local function armSpinFinishedChain()
+            _hooked, _fallback = false, false
+            -- Preferred: hook the outgoing FireServer call to SpinFinished and chain 0.5s later
+                if REM_SPIN and hookmetamethod and getnamecallmethod then
+                local old
+                local handler = function(self, ...)
+                            local m = tostring(getnamecallmethod()):lower()
+                            if m == "fireserver" and typeof(self)=="Instance" and self:IsA("RemoteEvent") then
+                            -- Robust identity check by path
+                            local p = self.Parent
+                                if self == REM_SPIN or (self.Name == "SpinFinished" and p and p.Name == "SeedPack" and p.Parent and p.Parent.Name == "GameEvents") then
+                                    print("[SeedPackAssist] Detected SpinFinished:FireServer(); chaining in 1.0s...")
+                                    _scheduleChain(1.0)
+                            end
+                    end
+                    return old(self, ...)
+                end
+                if newcclosure then
+                    old = hookmetamethod(game, "__namecall", newcclosure(handler))
+                else
+                    old = hookmetamethod(game, "__namecall", handler)
+                end
+                _hooked = true
+                print("[SeedPackAssist] Hooked SpinFinished for 1.0s chain.")
+            end
+            -- Also try to hook dot-call style: Remote.FireServer(Remote, ...)
+            pcall(function()
+                if REM_SPIN and hookfunction and REM_SPIN.FireServer then
+                    local oldFS
+                    oldFS = hookfunction(REM_SPIN.FireServer, function(self, ...)
+                        if self == REM_SPIN then
+                            print("[SeedPackAssist] Detected SpinFinished dot-call; chaining in 1.0s...")
+                            _scheduleChain(1.0)
+                        end
+                        return oldFS(self, ...)
+                    end)
+                    _hooked = true
+                    print("[SeedPackAssist] Hooked SpinFinished.FireServer (dot-call).")
+                end
+            end)
+                    -- Always also chain on server Result so it still runs even if hook fails silently
+                    if REM_RESULT and not _resConn then
+                        _resConn = REM_RESULT.OnClientEvent:Connect(function()
+                            print("[SeedPackAssist] Result received; chaining in 1.0s (fallback path)...")
+                            _scheduleChain(1.0)
+                        end)
+                        _fallback = not _hooked
+                        if _fallback then
+                            print("[SeedPackAssist] Hook not available; chaining on Result instead.")
+                        end
+                    end
+            -- Optional: also chain on SpinFinished OnClientEvent if the server emits it
+            pcall(function()
+                if REM_SPIN and not REM_SPIN.__seedpackassist_clienthooked then
+                    REM_SPIN.__seedpackassist_clienthooked = true
+                    REM_SPIN.OnClientEvent:Connect(function()
+                        print("[SeedPackAssist] SpinFinished OnClientEvent; chaining in 1.0s...")
+                        _scheduleChain(1.0)
+                    end)
+                end
+            end)
+        end
+
+            API.arm = function()
+                -- quick debug: list remotes under SeedPack
+                local names = {}
+                for _, c in ipairs(SPF:GetChildren()) do
+                    if c:IsA("RemoteEvent") then table.insert(names, c.Name) end
+                end
+                print("[SeedPackAssist] SeedPack remotes:", table.concat(names, ", "))
+                print("[SeedPackAssist] REM_SPIN exists:", REM_SPIN ~= nil)
+
+                armSkipOnOpen()
+                armSpinFinishedChain()
+                print("[SeedPackAssist] armed. (hook=", _hooked, ", fallback=", _fallback, ")")
+            end
+        API.disarm = function()
+            if _guiConn then _guiConn:Disconnect(); _guiConn=nil end
+            if _resConn then _resConn:Disconnect(); _resConn=nil end
+            print("[SeedPackAssist] disarmed.")
+        end
+    API.skipNow = function() skipBurst(1.2) end
+    API.chainAfter = function(sec) openNextAfter(sec or 1.0) end
+        API.setOpenCallback = function(fn) _openCallback = fn end
+
+        (getgenv() or _G).SeedPackAssist = API
+        -- Auto-arm on define so hooks exist before first spin
+        pcall(function()
+            if type(API.arm) == 'function' and not (getgenv() or _G).__SP_assistArmed then
+                (getgenv() or _G).__SP_assistArmed = true
+                print('[SeedPackAssist] auto-arming hooks at load')
+                API.arm()
+            end
+        end)
+    end
+    -- ===========================================================================
+
+-- Hook to detect when client calls SpinFinished:FireServer() (signals open done)
+local _seedHookInstalled = false
+local _seedDoneFlag = false
+local function _installSpinFinishedHook()
+    if _seedHookInstalled then return end
+    if not hookmetamethod then return end
+    _seedHookInstalled = true
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = (getnamecallmethod and getnamecallmethod()) or ""
+        local ok = true
+        -- Only inspect non-caller code to avoid recursion if available
+        if (typeof(self) == "Instance") and self:IsA("RemoteEvent") and method == "FireServer" then
+            local p = self.Parent
+            if self.Name == "SpinFinished" and p and p.Name == "SeedPack" and p.Parent and p.Parent.Name == "GameEvents" then
+                _seedDoneFlag = true
+            end
+        end
+        return old(self, ...)
+    end)
+end
+
+local function _waitForSpinFinished(timeout)
+    _installSpinFinishedHook()
+    _seedDoneFlag = false
+    local t0 = os.clock()
+    while os.clock() - t0 < (timeout or 8) do
+        if _seedDoneFlag then return true end
+        task.wait(0.05)
+    end
+    return false
+end
+
+local function _findSkipButton()
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    -- Try common names/paths
+    local lower = string.lower
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("LayerCollector") then
+            -- 1) any descendant named 'Skip'
+            local found = gui:FindFirstChild("Skip", true)
+            if found and (found:IsA("TextButton") or found:IsA("ImageButton")) then return found end
+            -- 2) any TextButton whose Text looks like 'Skip'
+            for _, d in ipairs(gui:GetDescendants()) do
+                if d:IsA("TextButton") then
+                    local t = tostring(d.Text or "")
+                    if lower(t) == "skip" or lower(t):find("skip", 1, true) then return d end
+                elseif d:IsA("ImageButton") and (lower(d.Name):find("skip", 1, true)) then
+                    return d
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function _isGuiInteractable(gui)
+    if not gui or not gui.Visible then return false end
+    local p = gui.Parent
+    while p and p:IsA("GuiObject") do
+        if not p.Visible then return false end
+        p = p.Parent
+    end
+    return true
+end
+
+local function _clickGui(btn)
+    pcall(function()
+        if not _isGuiInteractable(btn) then return end
+        -- Prefer safe activation that doesn’t disturb global input
+        if btn.Activate then btn:Activate() end
+        -- Also fire the click signal; many games bind to this directly
+        if btn.MouseButton1Click then btn.MouseButton1Click:Fire() end
+        task.wait(0.03)
+    end)
+end
+
+local function _equipToolByName(name)
+    if not name or name == "" then return false end
+    -- Ensure character exists
+    local char = LocalPlayer.Character
+    local t0 = os.clock()
+    while not char and os.clock() - t0 < 3 do char = LocalPlayer.Character; task.wait(0.05) end
+    if not char then return false end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not bp then return false end
+    local lname = string.lower(name)
+    -- Already equipped?
+    do
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool and string.lower(tool.Name) == lname then return true end
+    end
+    -- Search backpack: exact, then partial contains match
+    local target
+    for _, it in ipairs(bp:GetChildren()) do
+        if it:IsA("Tool") and string.lower(it.Name) == lname then target = it; break end
+    end
+    if not target then
+        for _, it in ipairs(bp:GetChildren()) do
+            if it:IsA("Tool") then
+                local tin = string.lower(it.Name)
+                if tin:find(lname, 1, true) or lname:find(tin, 1, true) then target = it; break end
+            end
+        end
+    end
+    if not target then return false end
+    -- Prefer Humanoid:EquipTool, fallback to parenting
+    local ok = false
+    if humanoid and humanoid.EquipTool then ok = pcall(function() humanoid:EquipTool(target) end) end
+    if not ok then pcall(function() target.Parent = char end) end
+    task.wait(0.15)
+    -- Confirm equipped
+    local equipped = char:FindFirstChild(target.Name) or char:FindFirstChildOfClass("Tool")
+    return equipped ~= nil
+end
+
+local function _leftClick()
+    pcall(function()
+        local vu = game:GetService("VirtualUser")
+        vu:CaptureController()
+        local cam = workspace.CurrentCamera
+        vu:ClickButton1(Vector2.new(0,0), cam and cam.CFrame or CFrame.new())
+    end)
+end
+
+local function _skipAnimation()
+    -- DISABLED: Skip button clicking was breaking game UI
+    -- Just return false to let the animation play naturally
+    return false
+end
+
+local function _openOneSeedPack()
+    print("=== SEED PACK DEBUG START ===")
+    local selKey = (AUTO_PACKS and type(AUTO_PACKS.selectedKey)=="string" and #AUTO_PACKS.selectedKey>0) and AUTO_PACKS.selectedKey or (rawget(_G, "__SP_lastKey"))
+    AUTO_PACKS.selectedKey = selKey or AUTO_PACKS.selectedKey
+    print("Selected pack key:", AUTO_PACKS.selectedKey)
+    
+    if not AUTO_PACKS.selectedKey or AUTO_PACKS.selectedKey == "" then 
+        print("ERROR: No pack selected (and no last key). Aborting.")
+        return false, "no-pack" 
+    end
+    
+    print("Looking for SeedPacks_Remote...")
+    print("SeedPacks_Remote exists:", SeedPacks_Remote ~= nil)
+    print("SeedPacks_Folder exists:", SeedPacks_Folder ~= nil)
+    
+    if SeedPacks_Remote then
+        print("SeedPacks_Remote type:", typeof(SeedPacks_Remote))
+        print("SeedPacks_Remote name:", SeedPacks_Remote.Name)
+        print("SeedPacks_Remote class:", SeedPacks_Remote.ClassName)
+        print("SeedPacks_Remote parent:", SeedPacks_Remote.Parent and SeedPacks_Remote.Parent.Name or "nil")
+    end
+    
+    if SeedPacks_Folder then
+        print("Available remotes in SeedPack folder:")
+        for _, child in ipairs(SeedPacks_Folder:GetChildren()) do
+            if child:IsA("RemoteEvent") then
+                print("  - RemoteEvent:", child.Name)
+            end
+        end
+    end
+    
+    -- Try to find the SeedPack remote and fire it directly (much safer)
+    local success, errorMsg = pcall(function()
+        if SeedPacks_Remote and SeedPacks_Remote.FireServer then
+            print("Firing SeedPack remote with:", AUTO_PACKS.selectedKey)
+            -- Fire the remote with the pack name - let the server handle everything
+            SeedPacks_Remote:FireServer(AUTO_PACKS.selectedKey)
+        if getgenv and getgenv().SeedPackAssist and getgenv().SeedPackAssist.skipNow then
+                task.delay(0.05, function()
+            pcall(getgenv().SeedPackAssist.skipNow)
+                end)
+            end
+            print("Remote fired successfully")
+        else
+            print("ERROR: SeedPacks_Remote or FireServer not available")
+            if SeedPacks_Folder then
+                print("Trying to find alternate remotes in folder...")
+                local remoteNames = {"Open", "OpenPack", "SpinPack", "UsePack", "ActivatePack"}
+                local foundRemote = false
+                
+                for _, remoteName in ipairs(remoteNames) do
+                    local remote = SeedPacks_Folder:FindFirstChild(remoteName)
+                    if remote and remote:IsA("RemoteEvent") then
+                        print("Found alternate remote:", remoteName, "- trying it...")
+                        remote:FireServer(AUTO_PACKS.selectedKey)
+            if getgenv and getgenv().SeedPackAssist and getgenv().SeedPackAssist.skipNow then
+                            task.delay(0.05, function()
+                pcall(getgenv().SeedPackAssist.skipNow)
+                            end)
+                        end
+                        print("Alternate remote fired successfully")
+                        foundRemote = true
+                        break
+                    end
+                end
+                
+                if not foundRemote then
+                    print("No alternate remotes found, trying any RemoteEvent...")
+                    for _, child in ipairs(SeedPacks_Folder:GetChildren()) do
+                        if child:IsA("RemoteEvent") then
+                            print("Trying RemoteEvent:", child.Name)
+                            child:FireServer(AUTO_PACKS.selectedKey)
+                if getgenv and getgenv().SeedPackAssist and getgenv().SeedPackAssist.skipNow then
+                                task.delay(0.05, function()
+                    pcall(getgenv().SeedPackAssist.skipNow)
+                                end)
+                            end
+                            print("Generic RemoteEvent fired successfully")
+                            foundRemote = true
+                            break
+                        end
+                    end
+                end
+                
+                if not foundRemote then
+                    error("No suitable remote found in folder")
+                end
+            else
+                error("No SeedPacks_Folder available")
+            end
+        end
+    end)
+    
+    print("Remote call success:", success)
+    if not success then
+        print("Remote call error:", errorMsg)
+        print("=== SEED PACK DEBUG END (FAILED) ===")
+        return false, "remote-failed"
+    end
+    
+    -- Wait for the spinning animation to start, then try to click Skip
+    print("Waiting for spin animation to start...")
+    task.wait(1.0) -- Wait longer for UI to appear
+    
+    -- Try to find and click the Skip button
+    print("Looking for Skip button...")
+    local skipClicked = false
+    local skipAttempts = 0
+    local maxSkipAttempts = 20 -- More attempts
+    
+    -- Also try to find skip buttons in a separate task while waiting
+    task.spawn(function()
+        for i = 1, 30 do -- Keep trying for 30 seconds
+            if skipClicked then break end
+            
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if pg then
+                for _, gui in ipairs(pg:GetChildren()) do
+                    if gui:IsA("ScreenGui") then
+                        for _, desc in ipairs(gui:GetDescendants()) do
+                            if (desc:IsA("TextButton") or desc:IsA("ImageButton") or desc:IsA("GuiButton")) and desc.Parent then
+                                local text = string.lower(tostring(desc.Text or ""))
+                                local name = string.lower(tostring(desc.Name or ""))
+                                
+                                -- Look for skip in text or name
+                                if text:find("skip") or name:find("skip") or text:find("continue") or name:find("continue") then
+                                    print("BACKGROUND: Found Skip/Continue button:", desc:GetFullName())
+                                    print("BACKGROUND: Text:", desc.Text, "Name:", desc.Name)
+                                    
+                                    -- Try clicking immediately
+                                    local clicked = false
+                                    pcall(function()
+                                        desc:Activate()
+                                        clicked = true
+                                        print("BACKGROUND: Called Activate()")
+                                    end)
+                                    
+                                    if not clicked then
+                                        pcall(function()
+                                            if desc.MouseButton1Click then
+                                                desc.MouseButton1Click:Fire()
+                                                clicked = true
+                                                print("BACKGROUND: Fired MouseButton1Click")
+                                            end
+                                        end)
+                                    end
+                                    
+                                    if clicked then
+                                        skipClicked = true
+                                        print("BACKGROUND: Skip button clicked successfully!")
+                                        return
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.5) -- Check every half second
+        end
+    end)
+    
+    while not skipClicked and skipAttempts < maxSkipAttempts do
+        skipAttempts = skipAttempts + 1
+        print("Skip attempt", skipAttempts)
+        
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            for _, gui in ipairs(pg:GetChildren()) do
+                if gui:IsA("ScreenGui") then
+                    for _, desc in ipairs(gui:GetDescendants()) do
+                        if (desc:IsA("TextButton") or desc:IsA("ImageButton") or desc:IsA("GuiButton")) and desc.Parent then
+                            local text = string.lower(tostring(desc.Text or ""))
+                            local name = string.lower(tostring(desc.Name or ""))
+                            
+                            -- Look for skip, continue, or next in text or name
+                            if text:find("skip") or name:find("skip") or text:find("continue") or name:find("continue") or text:find("next") or name:find("next") then
+                                print("Found Skip/Continue button:", desc:GetFullName(), "Text:", desc.Text, "Name:", desc.Name)
+                                print("Visible:", desc.Visible, "Active:", desc.Active, "Parent visible:", desc.Parent.Visible)
+                                
+                                -- Try multiple click methods
+                                pcall(function()
+                                    -- Method 1: Activate
+                                    desc:Activate()
+                                    print("Called Activate()")
+                                end)
+                                
+                                pcall(function()
+                                    -- Method 2: Fire click event
+                                    if desc.MouseButton1Click then
+                                        desc.MouseButton1Click:Fire()
+                                        print("Fired MouseButton1Click")
+                                    end
+                                end)
+                                
+                                pcall(function()
+                                    -- Method 3: Fire down/up events
+                                    if desc.MouseButton1Down then
+                                        desc.MouseButton1Down:Fire()
+                                    end
+                                    if desc.MouseButton1Up then
+                                        desc.MouseButton1Up:Fire()
+                                    end
+                                    print("Fired MouseButton1Down/Up")
+                                end)
+                                
+                                skipClicked = true
+                                print("Skip button clicked!")
+                                break
+                            end
+                        end
+                    end
+                    if skipClicked then break end
+                end
+            end
+        end
+        
+        if not skipClicked then
+            task.wait(0.5) -- Wait longer between attempts
+        end
+    end
+    
+    if not skipClicked then
+        print("Could not find/click Skip button after", maxSkipAttempts, "attempts")
+        
+        -- Debug: Show all buttons found in PlayerGui
+        print("=== BUTTON DEBUG DUMP ===")
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            for _, gui in ipairs(pg:GetChildren()) do
+                if gui:IsA("ScreenGui") then
+                    for _, desc in ipairs(gui:GetDescendants()) do
+                        if (desc:IsA("TextButton") or desc:IsA("ImageButton") or desc:IsA("GuiButton")) and desc.Parent then
+                            print("Button found:", desc:GetFullName())
+                            print("  Text:", tostring(desc.Text or ""))
+                            print("  Name:", tostring(desc.Name or ""))
+                            print("  Visible:", desc.Visible)
+                            print("  Active:", desc.Active)
+                        end
+                    end
+                end
+            end
+        end
+        print("=== END BUTTON DUMP ===")
+    else
+        print("Successfully found and clicked skip button!")
+    end
+    
+    -- Now wait for RESULT (server -> client) to confirm the roll completed
+    print("Waiting for RESULT (server -> client)...")
+    local done = false
+    local doneConn
+    local timeout = 20
+    local startTime = tick()
+
+    local resultRemote
+    pcall(function()
+        resultRemote = game:GetService("ReplicatedStorage")
+            :WaitForChild("GameEvents", 5)
+            :WaitForChild("SeedPack", 5)
+            :WaitForChild("Result", 5)
+    end)
+
+    if resultRemote then
+        doneConn = resultRemote.OnClientEvent:Connect(function(...)
+            done = true
+            if doneConn then doneConn:Disconnect(); doneConn = nil end
+        end)
+    else
+        -- last-ditch fallback so we never hang
+        task.wait(3)
+        done = true
+    end
+    
+    -- Wait for either SpinFinished signal or timeout
+    while not done and (tick() - startTime) < timeout do
+        task.wait(0.1)
+        
+        -- Show progress every 2 seconds
+        if math.floor(tick() - startTime) % 2 == 0 then
+            print("Still waiting for RESULT... elapsed:", math.floor(tick() - startTime), "seconds")
+        end
+    end
+    
+    -- Clean up connection if still active
+    if doneConn then
+        doneConn:Disconnect()
+        doneConn = nil
+    end
+    
+    if done then
+        print("Result received successfully!")
+        print("About to wait for delay:", AUTO_PACKS.delay or 0.5)
+        -- Wait the specified delay before next pack
+        task.wait(AUTO_PACKS.delay or 0.5)
+        print("Delay complete - returning success")
+        print("=== SEED PACK DEBUG END (SUCCESS) ===")
+        return true
+    else
+        print("Timeout waiting for RESULT")
+        print("Elapsed time:", tick() - startTime, "seconds")
+        print("=== SEED PACK DEBUG END (TIMEOUT) ===")
+        return false, "timeout"
+    end
+end
+
+-- Expose a debounced global wrapper that runs the full open routine
+do
+    local lastCallAt = 0
+    local cool = 0.3
+    (getgenv() or _G).__SP_openOne = function()
+        local now = time()
+        if now - lastCallAt < cool then return end
+        lastCallAt = now
+        local ok, err = pcall(function()
+            local gv = (getgenv and getgenv()) or _G
+            if not (gv and gv.AUTO_PACKS and gv.AUTO_PACKS.enabled) then
+                print('[SeedPack] __SP_openOne: AUTO_PACKS disabled; abort')
+                return
+            end
+            print('[SeedPack] __SP_openOne: starting full open flow at', os.date('%X'))
+            _openOneSeedPack()
+        end)
+        if not ok then warn('[SeedPack] __SP_openOne error:', err) end
+    end
+end
+
+local function startAutoSeedPacks(toast)
+    print("=== STARTING AUTO SEED PACKS ===")
+    print("Current settings:")
+    print("  selectedKey:", AUTO_PACKS.selectedKey)
+    print("  delay:", AUTO_PACKS.delay)
+    print("  skipViaRemote:", AUTO_PACKS.skipViaRemote)
+    
+    if AUTO_PACKS._busy then 
+        print("Already busy, returning")
+        return 
+    end
+    
+    -- Arm early so the hook exists before the first spin
+    local gv = (typeof(getgenv) == "function" and getgenv()) or _G
+    gv.SeedPackAssist = gv.SeedPackAssist or {}
+    if gv.SeedPackAssist.arm then pcall(gv.SeedPackAssist.arm) end
+    -- Optional: let helper know how to chain
+    gv.SeedPackAssist.onSpin = function()
+        if rawget(_G, 'openNextAfter') then _G.openNextAfter(1.0) end
+    end
+
+    AUTO_PACKS.enabled = true
+    _G.AUTO_PACKS = AUTO_PACKS -- expose for chain module
+    AUTO_PACKS._busy = true
+    if toast then toast("Auto Seed Packs ON") end
+    
+    AUTO_PACKS._task = task.spawn(function()
+        local failures = 0
+        local attempts = 0
+        print("Starting pack opening loop...")
+        
+    while AUTO_PACKS.enabled do
+            attempts = attempts + 1
+            print("\n--- PACK OPENING ATTEMPT", attempts, "---")
+            print("AUTO_PACKS.enabled:", AUTO_PACKS.enabled)
+            print("Selected pack:", AUTO_PACKS.selectedKey)
+            
+            local ok, reason = _openOneSeedPack()
+            print("Pack opening result - OK:", ok, "Reason:", reason or "none")
+            
+            if not ok then
+                failures = failures + 1
+                print("FAILURE COUNT:", failures, "/5")
+                if failures >= 5 then
+                    AUTO_PACKS.enabled = false
+                    print("Too many failures, stopping auto seed packs")
+                    if toast then toast("Auto Seed Packs stopped - check pack name") end
+                    break
+                end
+                print("Waiting 1 second after failure...")
+                task.wait(1)
+            else
+                failures = 0
+                print("Success! Resetting failure count")
+            end
+            
+            if AUTO_PACKS.enabled then
+                -- When chain mode is armed, _openOneSeedPack fires once; subsequent opens are triggered by chain.
+                -- We still keep a short idle wait to avoid tight loop.
+                local w = math.max(0.1, (AUTO_PACKS.delay or 0.5))
+                print("Loop continuing - idle", w, "s (chain will trigger next open)")
+                task.wait(w)
+                print("Ready for next pack! Loop iteration complete.")
+            else
+                print("AUTO_PACKS.enabled is false - exiting loop")
+                break
+            end
+        end
+        
+        AUTO_PACKS._busy = false
+        print("=== AUTO SEED PACKS LOOP ENDED ===")
+    end)
+end
+
+local function stopAutoSeedPacks(toast)
+    AUTO_PACKS.enabled = false
+    if AUTO_PACKS._task then pcall(task.cancel, AUTO_PACKS._task); AUTO_PACKS._task = nil end
+    AUTO_PACKS._busy = false
+    if toast then toast("Auto Seed Packs OFF") end
+
+    -- Disarm chain helper robustly (works with or without getgenv)
+    local gv = (typeof(getgenv) == "function" and getgenv()) or _G
+    local Assist = gv and gv.SeedPackAssist
+    if Assist and typeof(Assist.disarm) == "function" then
+        pcall(Assist.disarm)
+    end
+end
+
 -- Function to submit to fairy fountain
 local function submitToFairyFountain()
     if AUTO_FAIRY._busy then 
@@ -1329,9 +2630,7 @@ local function startAutoFairy(toast)
                 if not AUTO_FAIRY.lastSubmitted then
                     -- Check if we have new plants that haven't been submitted
                     local currentGlimmeringPlants = getGlimmeringPlantNames()
-                    local hasNewPlants = false
                     local newPlants = {}
-                    
                     for _, plantName in ipairs(currentGlimmeringPlants) do
                         local alreadySubmitted = false
                         for _, submittedPlant in ipairs(AUTO_FAIRY.submittedPlants or {}) do
@@ -1346,6 +2645,7 @@ local function startAutoFairy(toast)
                             table.insert(newPlants, plantName)
                         end
                     end
+                    
                     
                     if hasNewPlants then
                         local submissionSuccess = submitToFairyFountain()
@@ -3481,8 +4781,19 @@ local function execInfiniteYield(toast)
 end
 
 -- LOADING ---------------------------------------------------------------------
+local function getGuiParent()
+    local ok, ui = pcall(function()
+        if typeof(gethui) == "function" then
+            local container = gethui()
+            if container and container.Parent then return container end
+        end
+        return CoreGui
+    end)
+    return (ok and ui) or CoreGui
+end
+
 local function createLoadingScreen(onComplete)
-    local gui=mk("ScreenGui",{Name="PlaceholderUI_Loading",IgnoreGuiInset=true,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Global},CoreGui)
+    local gui=mk("ScreenGui",{Name="PlaceholderUI_Loading",IgnoreGuiInset=true,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Global},getGuiParent())
     local bg =mk("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=THEME.BG1,BackgroundTransparency=1},gui)
     local grid=mk("ImageLabel",{Image="rbxassetid://285329487",ScaleType=Enum.ScaleType.Tile,TileSize=UDim2.new(0,50,0,50),Size=UDim2.fromScale(2,2),Position=UDim2.fromScale(-0.5,-0.5),ImageTransparency=0.9,BackgroundTransparency=1},bg)
     TweenService:Create(grid,TweenInfo.new(24,Enum.EasingStyle.Linear,Enum.EasingDirection.Out,-1),{Position=UDim2.fromScale(0.5,0.5)}):Play()
@@ -3498,7 +4809,18 @@ local function createLoadingScreen(onComplete)
         local steps={{"Initializing...",.5},{"Loading assets...",.55},{"Building layout...",.65},{"Finalizing...",.5}}
         for i,s in ipairs(steps) do status.Text=s[1]; TweenService:Create(bar,TweenInfo.new(.32,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=UDim2.new(i/#steps,0,1,0)}):Play(); task.wait(s[2]) end
         task.wait(.25); TweenService:Create(bg,TweenInfo.new(.55,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{BackgroundTransparency=1}):Play()
-        task.wait(.35); gui:Destroy(); onComplete()
+        task.wait(.35); gui:Destroy();
+        -- Build the app with protection so any unexpected error doesn't leave a blank screen
+        local ok, err = pcall(onComplete)
+        if not ok then
+            warn("[GAG Hub] UI init error: ".. tostring(err))
+            -- Lightweight fallback error overlay so users see something instead of a blank screen
+            local errGui = mk("ScreenGui", {Name="GAGHub_Error", IgnoreGuiInset=true, ResetOnSpawn=false, ZIndexBehavior=Enum.ZIndexBehavior.Global}, CoreGui)
+            local box = mk("Frame", {Size=UDim2.new(0, 420, 0, 100), Position=UDim2.new(0.5,0,0.5,0), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor3=THEME.CARD}, errGui)
+            corner(box, 10); stroke(box, 1, THEME.BORDER); pad(box, 12, 12, 12, 12)
+            mk("TextLabel", {BackgroundTransparency=1, Font=FONTS.HB, Text="GAG Hub failed to load", TextSize=18, TextColor3=THEME.TEXT, Size=UDim2.new(1,0,0,24)}, box)
+            mk("TextLabel", {BackgroundTransparency=1, Font=FONTS.B, Text="An error occurred while building the UI. Open the F9 console for details.", TextWrapped=true, TextSize=14, TextColor3=THEME.MUTED, Position=UDim2.new(0,0,0,26), Size=UDim2.new(1,0,0,60)}, box)
+        end
     end)()
 end
 
@@ -3651,8 +4973,9 @@ end
 
 -- APP -------------------------------------------------------------------------
 local function buildApp()
-    if CoreGui:FindFirstChild("SpeedStyleUI") then CoreGui.SpeedStyleUI:Destroy() end
-    local app=mk("ScreenGui",{Name="SpeedStyleUI",IgnoreGuiInset=true,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Global},CoreGui)
+    local parent = getGuiParent()
+    if parent:FindFirstChild("SpeedStyleUI") then parent.SpeedStyleUI:Destroy() end
+    local app=mk("ScreenGui",{Name="SpeedStyleUI",IgnoreGuiInset=true,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Global},parent)
 
     local win=mk("Frame",{Name="MainWindow",Size=UDim2.new(0,720,0,420),Position=UDim2.new(0.5,-360,0.5,-210),BackgroundColor3=THEME.BG1,Active=true,Draggable=true},app)
     corner(win,14); stroke(win,1,THEME.BORDER)
@@ -3671,7 +4994,7 @@ local function buildApp()
 
     local top=mk("Frame",{BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,0,36)},win); corner(top,10); stroke(top,1,THEME.BORDER); top.ClipsDescendants = true
     -- Title shifted to avoid overlapping the menu icon (28px wide + padding)
-    mk("TextLabel",{BackgroundTransparency=1,Font=FONTS.HB,Text="GAG HUB | v1.5.5",TextColor3=THEME.TEXT,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,44,0,0),Size=UDim2.new(1,-160,1,0)},top)
+    mk("TextLabel",{BackgroundTransparency=1,Font=FONTS.HB,Text="GAG HUB | v1.0",TextColor3=THEME.TEXT,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,44,0,0),Size=UDim2.new(1,-160,1,0)},top)
     local menuBtn=mk("ImageButton",{AutoButtonColor=false,BackgroundColor3=THEME.BG3,Size=UDim2.new(0,28,0,24),Position=UDim2.new(0,8,0.5,0),AnchorPoint=Vector2.new(0,0.5),ImageTransparency=1},top)
     do
         local function bar(y)
@@ -3830,7 +5153,7 @@ local function buildApp()
         makeToggle(
             autoCollectSection,
             "Auto-Collect Plants",
-            "Automatically collect all ready plants continuously",
+            "Auto collects all plants",
             getSetting("autoCollectEnabled", false),
             function(on)
                 if on then
@@ -3975,6 +5298,29 @@ local function buildApp()
 
     -- Removed legacy GAG Hub page; moved UI Options into Misc page
 
+    -- Safe deferrer for PERF.* calls used by UI before PERF is fully defined
+    local function callPERF(methodName, ...)
+        local args = {...}
+        local function try()
+            if PERF and type(PERF[methodName]) == "function" then
+                local ok, err = pcall(PERF[methodName], table.unpack(args))
+                if not ok then warn("[PERF] "..methodName.." error: ", err) end
+                return true
+            end
+            return false
+        end
+        if try() then return true end
+        task.spawn(function()
+            local t0 = os.clock()
+            while os.clock() - t0 < 15 do
+                if try() then return end
+                task.wait(0.1)
+            end
+            warn("[PERF] Timed out waiting for PERF."..tostring(methodName))
+        end)
+        return false
+    end
+
     do
         local P=makePage("Player")
         local GM = groupBox(P.Body, "Movement")
@@ -4003,7 +5349,7 @@ local function buildApp()
         makeToggle(GA,"Infinite Jump","Allow jumping mid-air",getSetting("infiniteJumpEnabled", false),function(on) InfiniteJump.Enabled=on end,toast,"infiniteJumpEnabled")
         makeToggle(GA,"NoClip","Disable collisions on your character",getSetting("noClipEnabled", false),function(on) setNoClip(on) end,toast,"noClipEnabled")
         makeToggle(GA,"Ctrl + Click Teleport","Hold LeftCtrl and click to teleport",getSetting("teleportEnabled", false),function(on) Teleport.Enabled=on end,toast,"teleportEnabled")
-        makeToggle(GA,"Anti-AFK","Prevents 20m idle kick (VirtualUser)",getSetting("antiAFKEnabled", false),function(on) setAntiAFK(on) end,toast,"antiAFKEnabled")
+        makeToggle(GA,"Anti-AFK","Prevents afk kick",getSetting("antiAFKEnabled", false),function(on) setAntiAFK(on) end,toast,"antiAFKEnabled")
         
         -- Apply saved settings on startup
         if getSetting("customSpeedEnabled", false) then
@@ -4038,17 +5384,17 @@ local function buildApp()
 
         -- Visuals section (collapsible)
         local V = makeCollapsibleSection(P.Body, "Visuals", false)
-        makeToggle(V, "Vibrant Grass Overlay", "Client-only overlay (no duplicates)", getSetting("grassOverlayEnabled", false), function(on)
+        makeToggle(V, "Realish Grass", "Client-only", getSetting("grassOverlayEnabled", false), function(on)
             if on then GO_Start() else GO_Stop() end
         end, toast, "grassOverlayEnabled")
 
         -- Performance section
         local PR = makeCollapsibleSection(P.Body, "Performance", false)
         makeToggle(PR, "Hide Other Players' Gardens", "Removes other gardens from your view (client-only)", getSetting("hideOtherGardensEnabled", false), function(on)
-            PERF.SetHideOtherGardens(on)
+            callPERF("SetHideOtherGardens", on)
         end, toast, "hideOtherGardensEnabled")
         makeToggle(PR, "Low Graphics Mode", "Disable heavy post effects, shadows, and water features", getSetting("lowGraphicsEnabled", false), function(on)
-            PERF.SetLowGraphics(on)
+            callPERF("SetLowGraphics", on)
         end, toast, "lowGraphicsEnabled")
 
         -- Apply saved visual settings on startup
@@ -4059,10 +5405,10 @@ local function buildApp()
             GO_Start()
         end
         if getSetting("hideOtherGardensEnabled", false) then
-            PERF.SetHideOtherGardens(true)
+            callPERF("SetHideOtherGardens", true)
         end
         if getSetting("lowGraphicsEnabled", false) then
-            PERF.SetLowGraphics(true)
+            callPERF("SetLowGraphics", true)
         end
 
     -- Beach controls (moved under Visuals)
@@ -4453,13 +5799,18 @@ local function buildApp()
         end)
     end
 
-    -- ====================== BEANSTALK EVENT: DEBUGGER =======================
+    -- ====================== FAIRY EVENT P2: DEBUGGER =======================
     do
         local Players = game:GetService("Players")
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local Workspace = game:GetService("Workspace")
-        local ROOTN = "BeanstalkEvent"
-        local DBG = { clone=nil, hi=nil, label=nil }
+        local DBG = { clones = {}, his = {}, labels = {} }
+
+        local EXACT_TARGETS = {
+            "FairyGenius",
+            "FairyIsland",
+        }
+        local KEYWORDS = { "fairy", "genius" } -- catch "anything related" by name
 
         local function findDeep(container, name)
             if not container then return nil end
@@ -4486,12 +5837,15 @@ local function buildApp()
             end
         end
 
-        local function pivotInFront(model, studs)
+        local function pivotInFront(model, studs, offsetIndex)
             studs = studs or 18
+            offsetIndex = offsetIndex or 0
             local ch = Players.LocalPlayer.Character
             local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
             if not (model and hrp) then return end
-            local cf = hrp.CFrame * CFrame.new(0,0,-studs)
+            local lateral = (offsetIndex % 3 - 1) * 10
+            local depth = math.floor(offsetIndex / 3) * 8
+            local cf = hrp.CFrame * CFrame.new(lateral, 0, -studs - depth)
             if model.PivotTo then model:PivotTo(cf)
             else
                 local pp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
@@ -4500,103 +5854,226 @@ local function buildApp()
         end
 
         local function addDebugViz(root)
-            if DBG.hi then DBG.hi:Destroy() end
             local h = Instance.new("Highlight"); h.FillTransparency=0.85; h.OutlineTransparency=0.1
-            h.Adornee=root; h.Parent=root; DBG.hi=h
+            h.Adornee=root; h.Parent=root; table.insert(DBG.his, h)
 
-            if DBG.label then DBG.label:Destroy() end
             local bb = Instance.new("BillboardGui")
-            bb.Size = UDim2.new(0,220,0,50); bb.StudsOffsetWorldSpace = Vector3.new(0,6,0); bb.AlwaysOnTop=true
+            bb.Size = UDim2.new(0,240,0,50); bb.StudsOffsetWorldSpace = Vector3.new(0,6,0); bb.AlwaysOnTop=true
             bb.Parent = root
             local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.fromScale(1,1)
-            tl.Text = "[BeanstalkEvent debug]"; tl.TextColor3=Color3.new(1,1,1); tl.TextStrokeTransparency=0.2
+            tl.Text = "[Fairy Event P2 debug]"; tl.TextColor3=Color3.new(1,1,1); tl.TextStrokeTransparency=0.2
             tl.Font=Enum.Font.GothamBold; tl.TextScaled=true; tl.Parent=bb
-            DBG.label = bb
+            table.insert(DBG.labels, bb)
         end
 
-        local function scanForBeanstalk()
+        local function topModelOf(inst)
+            if not inst then return nil end
+            local cur = inst
+            local lastModel = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
+            while lastModel and lastModel.Parent and not lastModel.Parent:IsA("DataModel") do
+                if lastModel.Parent:IsA("Model") then lastModel = lastModel.Parent else break end
+            end
+            return lastModel or inst
+        end
+
+        local function collectMatches(container)
+            local out = {}
+            if not container then return out end
+            local seen = {}
+
+            -- exacts first
+            for _,name in ipairs(EXACT_TARGETS) do
+                local got = findDeep(container, name)
+                if got then
+                    local root = topModelOf(got)
+                    if root and not seen[root] then seen[root]=true; table.insert(out, root) end
+                end
+            end
+            -- keyword sweep
+            local function tryAdd(inst)
+                local n = string.lower(inst.Name or "")
+                for _,kw in ipairs(KEYWORDS) do
+                    if n:find(kw) then
+                        local root = topModelOf(inst)
+                        if root and not seen[root] then seen[root]=true; table.insert(out, root) end
+                        break
+                    end
+                end
+            end
+            local ok = pcall(function()
+                for _,d in ipairs(container:GetDescendants()) do
+                    if d:IsA("Model") or d:IsA("Folder") or d:IsA("BasePart") then tryAdd(d) end
+                end
+            end)
+            if not ok then -- ignore container access issues
+            end
+            return out
+        end
+
+        local function scanForFairyP2()
             local hits = {}
-            local function add(where, inst) if inst then table.insert(hits, {where=where, inst=inst}) end end
+            local function add(where, inst)
+                if inst then table.insert(hits, {where=where, inst=inst}) end
+            end
             -- Workspace direct or deep
-            add("Workspace", Workspace:FindFirstChild(ROOTN) or findDeep(Workspace, ROOTN))
+            for _,m in ipairs(collectMatches(Workspace)) do add("Workspace", m) end
             -- Replicated services
-            add("ReplicatedStorage", findDeep(ReplicatedStorage, ROOTN))
-            add("ReplicatedFirst",  findDeep(game:GetService("ReplicatedFirst"), ROOTN))
-            add("Lighting",         findDeep(game:GetService("Lighting"), ROOTN))
+            for _,m in ipairs(collectMatches(ReplicatedStorage)) do add("ReplicatedStorage", m) end
+            for _,m in ipairs(collectMatches(game:GetService("ReplicatedFirst"))) do add("ReplicatedFirst", m) end
+            for _,m in ipairs(collectMatches(game:GetService("Lighting"))) do add("Lighting", m) end
             -- Top-level containers named like UpdateService
             for _,child in ipairs(game:GetChildren()) do
                 local n = string.lower(child.Name or "")
                 if n == "updateservice" or n:find("update") then
-                    add(child.Name, findDeep(child, ROOTN))
+                    for _,m in ipairs(collectMatches(child)) do add(child.Name, m) end
                 end
             end
-            local out = {}
-            for _,h in ipairs(hits) do if h.inst then table.insert(out, h) end end
-            return out
-        end
-
-        function Beanstalk_Scan()
-            local hits = scanForBeanstalk()
-            print(("[BeanstalkDebug] Found %d candidate(s):"):format(#hits))
-            for i,h in ipairs(hits) do
-                print(("  %d) %s → %s"):format(i, h.where, h.inst:GetFullName()))
-            end
-            if #hits == 0 then warn("[BeanstalkDebug] No BeanstalkEvent accessible to client") end
             return hits
         end
 
-        function Beanstalk_ShowExisting()
-            local inst = Workspace:FindFirstChild(ROOTN) or findDeep(Workspace, ROOTN)
-            if not inst then warn("[BeanstalkDebug] No existing BeanstalkEvent in Workspace"); return false end
-            ensureVisible(inst); addDebugViz(inst)
-            print("[BeanstalkDebug] Forced visible in Workspace:", inst:GetFullName())
+        function FairyP2_Scan()
+            local hits = scanForFairyP2()
+            print(("[FairyP2] Found %d asset(s):"):format(#hits))
+            for i,h in ipairs(hits) do
+                print(("  %d) %s → %s"):format(i, h.where, h.inst:GetFullName()))
+            end
+            if #hits == 0 then warn("[FairyP2] No Fairy-related assets accessible to client") end
+            return hits
+        end
+
+        function FairyP2_ShowExisting()
+            local found = {}
+            for _,m in ipairs(scanForFairyP2()) do
+                if m.where == "Workspace" then table.insert(found, m.inst) end
+            end
+            if #found == 0 then warn("[FairyP2] No existing Fairy assets in Workspace"); return false end
+            for _,inst in ipairs(found) do ensureVisible(inst); addDebugViz(inst) end
+            print(("[FairyP2] Forced visible %d asset(s) in Workspace"):format(#found))
             return true
         end
 
-        function Beanstalk_CloneFromAny()
-            local hits = scanForBeanstalk()
-            if #hits == 0 then warn("[BeanstalkDebug] Nothing to clone (server-only?)") return false end
-            if DBG.clone and DBG.clone.Parent then DBG.clone:Destroy(); DBG.clone=nil end
-            -- Prefer non-Workspace sources first
-            local src = hits[1].inst
-            for _,h in ipairs(hits) do if h.where ~= "Workspace" then src = h.inst break end end
-            local ok, clone = pcall(function() return src:Clone() end)
-            if not ok or not clone then warn("[BeanstalkDebug] Clone failed") return false end
-            clone.Name = "BeanstalkEvent_DEBUG"; clone.Parent = Workspace
-            ensureVisible(clone); pivotInFront(clone, 18); addDebugViz(clone)
-            DBG.clone = clone
-            local parts, prompts = 0, 0
-            for _,d in ipairs(clone:GetDescendants()) do if d:IsA("BasePart") then parts = parts + 1 end; if d:IsA("ProximityPrompt") then prompts = prompts + 1 end end
-            print(("[BeanstalkDebug] Spawned debug clone → %d parts, %d prompts"):format(parts, prompts))
-            return true
+        function FairyP2_CloneFromAny()
+            local hits = scanForFairyP2()
+            local toClone = {}
+            for _,h in ipairs(hits) do if h.where ~= "Workspace" then table.insert(toClone, h.inst) end end
+            if #toClone == 0 then warn("[FairyP2] Nothing to clone (server-only or already in Workspace)") return false end
+
+            -- clear previous clones
+            for _,c in ipairs(DBG.clones) do if c and c.Parent then c:Destroy() end end
+            DBG.clones, DBG.his, DBG.labels = {}, {}, {}
+
+            for i,src in ipairs(toClone) do
+                local ok, clone = pcall(function() return src:Clone() end)
+                if ok and clone then
+                    clone.Name = (src.Name .. "_DEBUG")
+                    clone.Parent = Workspace
+                    ensureVisible(clone)
+                    pivotInFront(clone, 18, i-1)
+                    addDebugViz(clone)
+                    table.insert(DBG.clones, clone)
+                    local parts, prompts = 0, 0
+                    for _,d in ipairs(clone:GetDescendants()) do if d:IsA("BasePart") then parts = parts + 1 end; if d:IsA("ProximityPrompt") then prompts = prompts + 1 end end
+                    print(("[FairyP2] Cloned %s → %d parts, %d prompts"):format(src:GetFullName(), parts, prompts))
+                else
+                    warn("[FairyP2] Clone failed for ".. tostring(src))
+                end
+            end
+            return #DBG.clones > 0
         end
 
-        function Beanstalk_RemoveClone()
-            if DBG.clone and DBG.clone.Parent then DBG.clone:Destroy(); DBG.clone=nil; print("[BeanstalkDebug] Removed clone"); return true end
-            return false
+        function FairyP2_RemoveClones()
+            local removed = false
+            for _,c in ipairs(DBG.clones) do if c and c.Parent then c:Destroy(); removed = true end end
+            for _,h in ipairs(DBG.his) do if h and h.Parent then h:Destroy() end end
+            for _,l in ipairs(DBG.labels) do if l and l.Parent then l:Destroy() end end
+            DBG.clones, DBG.his, DBG.labels = {}, {}, {}
+            if removed then print("[FairyP2] Removed client clones") end
+            return removed
         end
 
         -- expose in _G for console
-        _G.Beanstalk_Scan = Beanstalk_Scan
-        _G.Beanstalk_ShowExisting = Beanstalk_ShowExisting
-        _G.Beanstalk_CloneFromAny = Beanstalk_CloneFromAny
-        _G.Beanstalk_RemoveClone = Beanstalk_RemoveClone
+        _G.FairyP2_Scan = FairyP2_Scan
+        _G.FairyP2_ShowExisting = FairyP2_ShowExisting
+        _G.FairyP2_CloneFromAny = FairyP2_CloneFromAny
+        _G.FairyP2_RemoveClones = FairyP2_RemoveClones
 
         -- UI wrappers expected by Events page
-        function revealBeanstalkEvent(toast)
-            local ok = Beanstalk_ShowExisting()
-            if not ok then ok = Beanstalk_CloneFromAny() end
+        function revealFairyEventP2(toast)
+            -- Move FairyIsland and FairyGenius from ReplicatedStorage.Modules.UpdateService to Workspace/FairyStuff
+            local rs = game:GetService("ReplicatedStorage")
+            local source
+            local ok, err = pcall(function()
+                source = rs:WaitForChild("Modules"):WaitForChild("UpdateService")
+            end)
+            if not ok or not source then
+                warn("[FairyP2] Could not locate ReplicatedStorage.Modules.UpdateService:", err)
+                if toast then toast("Fairy Event P2: UpdateService not found") end
+                return
+            end
+
+            local targetFolderName = "FairyStuff"
+            local target = Workspace:FindFirstChild(targetFolderName)
+            if not target then
+                target = Instance.new("Folder")
+                target.Name = targetFolderName
+                target.Parent = Workspace
+            end
+
+            _G.FairyOriginalParents = _G.FairyOriginalParents or {}
+            local itemsToMove = { "FairyIsland", "FairyGenius" }
+            local moved, missing = 0, {}
+
+            for _, name in ipairs(itemsToMove) do
+                local obj = source:FindFirstChild(name)
+                if obj then
+                    if not _G.FairyOriginalParents[obj] then
+                        _G.FairyOriginalParents[obj] = obj.Parent
+                    end
+                    obj.Parent = target
+                    moved = moved + 1
+                    print("[FairyP2] Moved:", obj.Name)
+                else
+                    table.insert(missing, name)
+                    warn("[FairyP2] Not found:", name)
+                end
+            end
+
+            print("[FairyP2] Done moving FairyIsland and FairyGenius into Workspace/" .. targetFolderName)
             if toast then
-                if ok then toast("Beanstalk: visible (existing or cloned)") else toast("Beanstalk: not found to clone") end
+                local msg = ("Fairy Event P2: moved %d item(s) into Workspace/%s"):format(moved, targetFolderName)
+                if #missing > 0 then msg = msg .. " (missing: " .. table.concat(missing, ", ") .. ")" end
+                toast(msg)
             end
         end
-        function clearBeanstalkClientClones(toast)
-            local removed = false
-            if Beanstalk_RemoveClone() then removed = true end
-            local ws = Workspace
-            local dbg = ws:FindFirstChild("BeanstalkEvent_DEBUG")
-            if dbg then dbg:Destroy(); removed = true end
-            if toast then toast(removed and "Beanstalk: cleared client clones" or "Beanstalk: no client clones") end
+        function clearFairyP2ClientClones(toast)
+            -- Restore moved items back to their original parents when possible
+            local target = Workspace:FindFirstChild("FairyStuff")
+            local restored = 0
+            local parents = _G.FairyOriginalParents or {}
+
+            if target then
+                for _, child in ipairs(target:GetChildren()) do
+                    local orig = parents[child]
+                    if orig and orig.Parent then
+                        child.Parent = orig
+                        restored = restored + 1
+                    else
+                        -- Fallback: return to ReplicatedStorage.Modules.UpdateService if available
+                        local rs = game:GetService("ReplicatedStorage")
+                        local modules = rs:FindFirstChild("Modules")
+                        local updateService = modules and modules:FindFirstChild("UpdateService") or nil
+                        if updateService then
+                            child.Parent = updateService
+                            restored = restored + 1
+                        else
+                            warn("[FairyP2] Original parent missing and UpdateService not found for:", child.Name)
+                        end
+                    end
+                end
+                if #target:GetChildren() == 0 then target:Destroy() end
+            end
+
+            if toast then toast(restored > 0 and "Fairy Event P2: restored moved items" or "Fairy Event P2: nothing to restore") end
         end
     end
 
@@ -4667,7 +6144,7 @@ local function buildApp()
         end)
 
         -- Auto-Restart toggle (merged under Fairy Event)
-        makeToggle(autoFairySection, "Auto-Restart Track", "Every 5s call RestartFairyTrack (EZ)", getSetting("autoRestartEnabled", false), function(on)
+        makeToggle(autoFairySection, "Auto-Restart Track", "Restarts fairytrack when needed", getSetting("autoRestartEnabled", false), function(on)
             AUTO_FAIRY.autoRestartEnabled = on
             if on then
                 startAutoRestartLoop(toast)
@@ -4678,7 +6155,7 @@ local function buildApp()
 
     -- FAIRY WISH (merged into Fairy Event section)
     local wishSection = autoFairySection
-    makeToggle(wishSection, "Auto Make a Wish", "Fires FairyService.MakeFairyWish every 5s", getSetting("autoWishEnabled", false), function(on)
+    makeToggle(wishSection, "Auto Make a Wish", "Auto makes a wish for fairy event", getSetting("autoWishEnabled", false), function(on)
             if on then startAutoWish(toast) else stopAutoWish(toast) end
         end, toast, "autoWishEnabled")
 
@@ -4875,22 +6352,71 @@ local function buildApp()
             local ok = select(1, restartFairyTrack()); toast(ok and "Restarted Fairy Track" or "Restart failed")
         end)
 
-        -- NEW: Beanstalk Event Tools
-        local beanSection = makeCollapsibleSection(P.Body, "Beanstalk Event", false)
+        -- NEW: Fairy Event P2 Tools
+        local beanSection = makeCollapsibleSection(P.Body, "Fairy Event P2", false)
         local rowReveal = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
         corner(rowReveal,8); stroke(rowReveal,1,THEME.BORDER); pad(rowReveal,6,6,6,6)
-        local btnReveal = mk("TextButton",{Text="Reveal Beanstalk in Workspace",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowReveal)
+        local btnReveal = mk("TextButton",{Text="Bring FairyGenius & FairyIsland into Workspace",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowReveal)
         corner(btnReveal,8); stroke(btnReveal,1,THEME.BORDER); hover(btnReveal,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnReveal.MouseButton1Click:Connect(function()
-            revealBeanstalkEvent(toast)
+            revealFairyEventP2(toast)
         end)
 
         local rowClear = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
         corner(rowClear,8); stroke(rowClear,1,THEME.BORDER); pad(rowClear,6,6,6,6)
-        local btnClear = mk("TextButton",{Text="Hide/Remove Client Clones",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClear)
+        local btnClear = mk("TextButton",{Text="Hide/Remove Fairy Client Clones",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClear)
         corner(btnClear,8); stroke(btnClear,1,THEME.BORDER); hover(btnClear,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnClear.MouseButton1Click:Connect(function()
-            clearBeanstalkClientClones(toast)
+            clearFairyP2ClientClones(toast)
+        end)
+
+        -- Teleport to Fairy Island button
+        local rowTp = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
+        corner(rowTp,8); stroke(rowTp,1,THEME.BORDER); pad(rowTp,6,6,6,6)
+        local btnTp = mk("TextButton",{Text="Teleport to Fairy Island",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowTp)
+        corner(btnTp,8); stroke(btnTp,1,THEME.BORDER); hover(btnTp,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+        btnTp.MouseButton1Click:Connect(function()
+            local Players = game:GetService("Players")
+            local Workspace = game:GetService("Workspace")
+
+            local function findTarget()
+                local t = Workspace:FindFirstChild("FairyStuff")
+                if not t then return nil end
+                t = t:FindFirstChild("FairyIsland"); if not t then return nil end
+                t = t:FindFirstChild("FairyIsland"); if not t then return nil end
+                t = t:FindFirstChild("Decor"); if not t then return nil end
+                t = t:FindFirstChild("EntryFairyPond"); if not t then return nil end
+                return t
+            end
+
+            local target = findTarget()
+            if not target then
+                if toast then toast("Fairy Island not found in Workspace/FairyStuff. Click the bring button first.") end
+                return
+            end
+
+            local plr = Players.LocalPlayer
+            local char = plr and plr.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then
+                if toast then toast("No HumanoidRootPart; spawn in first") end
+                return
+            end
+
+            local cf
+            if target:IsA("BasePart") then
+                cf = target.CFrame + Vector3.new(0,3,0)
+            elseif target:IsA("Model") then
+                local pp = target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart", true)
+                if pp then cf = pp.CFrame + Vector3.new(0,3,0) end
+            end
+            if not cf then
+                if toast then toast("Teleport target isn’t a part; can’t teleport") end
+                return
+            end
+
+            hrp.CFrame = cf
+            if toast then toast("Teleported to Fairy Island") end
         end)
         
         -- Apply saved fairy settings on startup
@@ -5012,7 +6538,7 @@ local function buildApp()
         autoBuyTgl = makeToggle(
             seedShopSection,
             "Auto Buy Selected Seeds",
-            "Continuously buys the seeds you select below",
+            "Auto buys Seeds from seed shop",
             AUTO_SHOP.enabled,
             function(on)
                 AUTO_SHOP.modeSelected = on and true or false
@@ -5050,7 +6576,7 @@ local function buildApp()
     autoBuyAllTgl = makeToggle(
             seedShopSection,
             "Auto Buy All Seeds",
-            "Continuously buys every seed that appears in the shop",
+            "Auto buys every seed that appears in the shop",
             AUTO_SHOP.buyAll,
             function(on)
                 AUTO_SHOP.buyAll = on and true or false
@@ -5329,6 +6855,246 @@ local function buildApp()
         return AUTO_GEAR.availableGear
     end
 
+    -- PACKS PAGE -------------------------------------------------------------
+    do
+        local P = makePage("Packs")
+        local packsSection = makeCollapsibleSection(P.Body, "Auto Seed Packs", true)
+
+        -- Load pack list from game data if available
+        local PACK_LIST = {}
+        pcall(function()
+            local ok, data = pcall(function() return require(ReplicatedStorage.Data.SeedPackData) end)
+            if ok and data and data.Packs then
+                for key, rec in pairs(data.Packs) do
+                    local name = rec.DisplayName or key
+                    table.insert(PACK_LIST, { key = name, displayName = name })
+                end
+                table.sort(PACK_LIST, function(a,b) return a.displayName < b.displayName end)
+            end
+        end)
+        if #PACK_LIST == 0 then
+            -- fallback common names
+            PACK_LIST = {
+                {key = "Normal Seed Pack", displayName = "Normal Seed Pack"},
+                {key = "Exotic Seed Pack", displayName = "Exotic Seed Pack"},
+                {key = "Premium Seed Pack", displayName = "Premium Seed Pack"},
+                {key = "Flower Seed Pack", displayName = "Flower Seed Pack"},
+            }
+        end
+
+        -- Selected pack persistence
+        AUTO_PACKS.selectedKey = getSetting("seedPackSelectedKey", AUTO_PACKS.selectedKey)
+        AUTO_PACKS.delay = getSetting("seedPacksDelay", AUTO_PACKS.delay)
+        AUTO_PACKS.skipViaRemote = getSetting("seedPacksSkipViaRemote", AUTO_PACKS.skipViaRemote)
+
+        -- Dropdown UI (single-select)
+        local row = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},packsSection)
+        corner(row,8); stroke(row,1,THEME.BORDER); pad(row,6,6,6,6)
+        local lbl = mk("TextLabel",{Text="Seed Pack:",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundTransparency=1,Size=UDim2.new(0,120,1,0),TextXAlignment=Enum.TextXAlignment.Left},row)
+        local packDropdownButton = mk("TextButton",{
+            Text = (AUTO_PACKS.selectedKey ~= "" and (AUTO_PACKS.selectedKey.." ▼") or "Select Pack ▼"),
+            Font = FONTS.H, TextSize = 16, TextColor3 = THEME.TEXT,
+            BackgroundColor3 = THEME.BG2, AutoButtonColor = false,
+            Size = UDim2.new(1,-130,1,0), Position = UDim2.new(0,120,0,0), TextXAlignment = Enum.TextXAlignment.Left
+        }, row)
+        corner(packDropdownButton,8); stroke(packDropdownButton,1,THEME.BORDER); pad(packDropdownButton,0,0,0,12)
+
+        -- Dropdown list (initially hidden); positioned just under the row
+        local packListFrame = Instance.new("ScrollingFrame")
+        packListFrame.Parent = packsSection
+        packListFrame.BackgroundColor3 = THEME.BG1
+        packListFrame.BorderSizePixel = 0
+        packListFrame.Size = UDim2.new(1, -20, 0, 180)
+        packListFrame.Visible = false
+        packListFrame.ScrollBarThickness = 8
+        packListFrame.ClipsDescendants = true
+        corner(packListFrame, 8)
+        stroke(packListFrame, 1, THEME.BORDER)
+        local packListLayout = Instance.new("UIListLayout")
+        packListLayout.Parent = packListFrame
+        packListLayout.Padding = UDim.new(0, 3)
+        packListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+        -- Helper to place the list below the row regardless of layout
+        local function positionPackList()
+            local absRow = row.AbsolutePosition
+            local absSec = packsSection.AbsolutePosition
+            packListFrame.Position = UDim2.new(0, 10, 0, (absRow.Y - absSec.Y) + row.AbsoluteSize.Y + 4)
+        end
+        row:GetPropertyChangedSignal("AbsolutePosition"):Connect(positionPackList)
+        row:GetPropertyChangedSignal("AbsoluteSize"):Connect(positionPackList)
+        packsSection:GetPropertyChangedSignal("AbsolutePosition"):Connect(positionPackList)
+        task.defer(positionPackList)
+
+        local function updatePackDropdownText(open)
+            local base = (AUTO_PACKS.selectedKey ~= "" and AUTO_PACKS.selectedKey or "Select Pack")
+            packDropdownButton.Text = base .. (open and " ▲" or " ▼")
+        end
+
+        local function buildPackList()
+            -- clear items
+            for _,child in ipairs(packListFrame:GetChildren()) do
+                if child:IsA("Frame") then child:Destroy() end
+            end
+            local count = 0
+            for i, rec in ipairs(PACK_LIST) do
+                count = count + 1
+                local item = Instance.new("Frame")
+                item.Parent = packListFrame
+                local isSelected = (AUTO_PACKS.selectedKey ~= "" and (rec.key == AUTO_PACKS.selectedKey or rec.displayName == AUTO_PACKS.selectedKey))
+                item.BackgroundColor3 = isSelected and THEME.BG3 or THEME.BG2
+                item.BorderSizePixel = 0
+                item.Size = UDim2.new(1, -16, 0, 32)
+                item.LayoutOrder = i
+                corner(item, 6)
+
+                local btn = Instance.new("TextButton")
+                btn.Parent = item
+                btn.BackgroundTransparency = 1
+                btn.Size = UDim2.new(1, 0, 1, 0)
+                btn.TextXAlignment = Enum.TextXAlignment.Left
+                btn.Text = rec.displayName
+                btn.TextColor3 = THEME.TEXT
+                btn.Font = Enum.Font.Gotham
+                btn.TextSize = 14
+
+                -- Checkmark label on the right for selected item
+                local mark = Instance.new("TextLabel")
+                mark.Parent = item
+                mark.BackgroundTransparency = 1
+                mark.Size = UDim2.new(0, 24, 1, 0)
+                mark.Position = UDim2.new(1, -28, 0, 0)
+                mark.Text = isSelected and "✓" or ""
+                mark.TextColor3 = Color3.fromRGB(0, 200, 0)
+                mark.Font = Enum.Font.GothamBold
+                mark.TextSize = 16
+
+                btn.MouseButton1Click:Connect(function()
+                    AUTO_PACKS.selectedKey = rec.key or rec.displayName or ""
+                    setSetting("seedPackSelectedKey", AUTO_PACKS.selectedKey)
+                    packListFrame.Visible = false
+                    updatePackDropdownText(false)
+                    -- Rebuild to update highlighting and checkmarks
+                    buildPackList()
+                end)
+
+                item.MouseEnter:Connect(function() item.BackgroundColor3 = THEME.BG3 end)
+                item.MouseLeave:Connect(function()
+                    local sel = (AUTO_PACKS.selectedKey ~= "" and (rec.key == AUTO_PACKS.selectedKey or rec.displayName == AUTO_PACKS.selectedKey))
+                    item.BackgroundColor3 = sel and THEME.BG3 or THEME.BG2
+                end)
+            end
+            packListFrame.CanvasSize = UDim2.new(0,0,0,(count * 35) + 10)
+        end
+        buildPackList()
+        updatePackDropdownText(false)
+
+        packDropdownButton.MouseButton1Click:Connect(function()
+            packListFrame.Visible = not packListFrame.Visible
+            updatePackDropdownText(packListFrame.Visible)
+            positionPackList()
+        end)
+
+        -- Close when clicking outside
+        local UIS = game:GetService("UserInputService")
+        UIS.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if not packListFrame.Visible then return end
+            local pos = UIS:GetMouseLocation()
+            local dbPos, dbSize = packDropdownButton.AbsolutePosition, packDropdownButton.AbsoluteSize
+            local lfPos, lfSize = packListFrame.AbsolutePosition, packListFrame.AbsoluteSize
+            local outsideBtn = pos.X < dbPos.X or pos.X > dbPos.X + dbSize.X or pos.Y < dbPos.Y or pos.Y > dbPos.Y + dbSize.Y
+            local outsideList = pos.X < lfPos.X or pos.X > lfPos.X + lfSize.X or pos.Y < lfPos.Y or pos.Y > lfPos.Y + lfSize.Y
+            if outsideBtn and outsideList then
+                packListFrame.Visible = false
+                updatePackDropdownText(false)
+            end
+        end)
+
+    -- Skip animation is automatic; no toggle shown
+
+        -- Delay slider
+        local function clamp(v,min,max) if v<min then return min elseif v>max then return max else return v end end
+        local delayRow = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},packsSection)
+        corner(delayRow,8); stroke(delayRow,1,THEME.BORDER); pad(delayRow,6,6,6,6)
+        local delayLbl = mk("TextLabel",{Text="Delay (s): "..tostring(AUTO_PACKS.delay),Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundTransparency=1,Size=UDim2.new(1,0,1,0),TextXAlignment=Enum.TextXAlignment.Left},delayRow)
+        local slider = mk("TextBox",{Text=tostring(AUTO_PACKS.delay),Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(0,80,1,0),Position=UDim2.new(1,-90,0,0),ClearTextOnFocus=false},delayRow)
+        corner(slider,8); stroke(slider,1,THEME.BORDER)
+        slider.FocusLost:Connect(function()
+            local v = tonumber(slider.Text) or AUTO_PACKS.delay
+            v = clamp(v, 0.1, 3)
+            AUTO_PACKS.delay = v
+            delayLbl.Text = "Delay (s): "..tostring(v)
+            setSetting("seedPacksDelay", v)
+        end)
+
+    -- Removed informational box per request
+        
+        makeToggle(
+            packsSection,
+            "Auto Open Seed Packs (Remote Mode)",
+            "Auto opens seed packs",
+            getSetting("autoSeedPacksEnabled", false),
+            function(on)
+                setSetting("autoSeedPacksEnabled", on)
+                if on then startAutoSeedPacks(toast) else stopAutoSeedPacks(toast) end
+            end,
+            toast,
+            "autoSeedPacksEnabled"
+        )
+
+        -- Apply saved on startup
+        if getSetting("autoSeedPacksEnabled", false) then
+            startAutoSeedPacks()
+        end
+    end
+
+    -- Webhooks Page -----------------------------------------------------------
+    do
+        local P = makePage("Webhooks")
+
+        local WH = makeCollapsibleSection(P.Body, "Customize Webhook", true)
+
+        -- Webhook URL input
+        local urlRow = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},WH)
+        corner(urlRow,8); stroke(urlRow,1,THEME.BORDER); pad(urlRow,6,6,6,6)
+        local urlLbl = mk("TextLabel",{Text="Discord Webhook URL:",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundTransparency=1,Size=UDim2.new(0,200,1,0),TextXAlignment=Enum.TextXAlignment.Left},urlRow)
+        local urlBox = mk("TextBox",{Text=tostring(getSetting("webhookUrl","")),PlaceholderText="https://discord.com/api/webhooks/...",Font=FONTS.H,TextSize=14,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,ClearTextOnFocus=false,Size=UDim2.new(1,-210,1,0),Position=UDim2.new(0,205,0,0)},urlRow)
+        corner(urlBox,8); stroke(urlBox,1,THEME.BORDER)
+        urlBox.FocusLost:Connect(function()
+            setSetting("webhookUrl", urlBox.Text)
+            toast("Webhook URL saved")
+        end)
+
+        -- Master enable toggle
+        makeToggle(
+            WH,
+            "Enable Webhooks",
+            "Master switch for all webhook messages",
+            getSetting("webhookEnabled", false),
+            function(on)
+                setSetting("webhookEnabled", on)
+                toast("Webhooks "..(on and "ENABLED" or "DISABLED"))
+            end,
+            toast,
+            "webhookEnabled"
+        )
+
+        -- SeedPack info toggle
+        makeToggle(
+            WH,
+            "Send Seed Pack Results",
+            "When you open a seed pack, send an embed with the result",
+            getSetting("webhookSeedpack", false),
+            function(on)
+                setSetting("webhookSeedpack", on)
+                toast("SeedPack Webhook "..(on and "ON" or "OFF"))
+            end,
+            toast,
+            "webhookSeedpack"
+        )
+    end
+
     getAvailableGear()
 
     local gearHeader = Instance.new("TextLabel")
@@ -5346,7 +7112,7 @@ local function buildApp()
     gearAutoSelectedTgl = makeToggle(
         gearShopSection,
         "Auto Buy Selected Gear",
-        "Continuously buys the gear you select below",
+        "Auto buys the gear you select below",
         AUTO_GEAR.enabled,
         function(on)
             AUTO_GEAR.modeSelected = on and true or false
@@ -5375,7 +7141,7 @@ local function buildApp()
     gearAutoAllTgl = makeToggle(
         gearShopSection,
         "Auto Buy All Gear",
-        "Continuously buys every gear item that appears in the shop",
+        "Auto buys every gear item that appears in the shop",
         AUTO_GEAR.buyAll,
         function(on)
             AUTO_GEAR.buyAll = on and true or false
@@ -5528,7 +7294,7 @@ local function buildApp()
     eggAutoSelectedTgl = makeToggle(
         eggShopSection,
         "Auto Buy Selected Eggs",
-        "Continuously buys the eggs you select below",
+        "Auto buys the eggs you select below",
         AUTO_EGG.enabled,
         function(on)
             AUTO_EGG.modeSelected = on and true or false
@@ -5557,7 +7323,7 @@ local function buildApp()
     eggAutoAllTgl = makeToggle(
         eggShopSection,
         "Auto Buy All Eggs",
-        "Continuously buys every egg",
+        "Auto buys every egg",
         AUTO_EGG.buyAll,
         function(on)
             AUTO_EGG.buyAll = on and true or false
@@ -5688,14 +7454,20 @@ local function buildApp()
     createEggList()
     end
 
-    addSide("Main","Main")
-    addSide("Events","Events")
-    addSide("Shops","Shops")
-    addSide("Player","Player")
-    addSide("Misc","Misc")
-    addSide("Scripts","Scripts")
+    local sideMain    = addSide("Main","Main")
+    local sideEvents  = addSide("Events","Events")
+    local sideShops   = addSide("Shops","Shops")
+    local sidePacks   = addSide("Packs","Packs")
+    local sideWebhooks= addSide("Webhooks","Webhooks")
+    local sidePlayer  = addSide("Player","Player")
+    local sideMisc    = addSide("Misc","Misc")
+    local sideScripts = addSide("Scripts","Scripts")
     applySide()
+    -- Default to Player page and visually mark it selected
     showPage("Player")
+    if sidePlayer then
+        TweenService:Create(sidePlayer, TweenInfo.new(.18,Enum.EasingStyle.Quad,Enum.EasingDirection.Out), {BackgroundColor3 = THEME.BG2}):Play()
+    end
 
     -- Apply glass look after UI is built, then snapshot for fades
     applyGlassLook(app)
