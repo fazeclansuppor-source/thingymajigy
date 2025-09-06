@@ -1,4 +1,4 @@
--- GAG HUB | v1.0
+-- GAG HUB | v1.5.5 (+ World & Scripts tabs)
 -- Adds:
 --  • World tab: Vibrant Grass Overlay (toggle) and Beach (Build/Clear/Print)
 --  • Scripts tab: "Load Infinite Yield" button (safe pcall + multi-fetch fallback)
@@ -4998,7 +4998,7 @@ local function buildApp()
 
     local top=mk("Frame",{BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,0,36)},win); corner(top,10); stroke(top,1,THEME.BORDER); top.ClipsDescendants = true
     -- Title shifted to avoid overlapping the menu icon (28px wide + padding)
-    mk("TextLabel",{BackgroundTransparency=1,Font=FONTS.HB,Text="GAG HUB | v1.0",TextColor3=THEME.TEXT,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,44,0,0),Size=UDim2.new(1,-160,1,0)},top)
+    mk("TextLabel",{BackgroundTransparency=1,Font=FONTS.HB,Text="GAG HUB | v1.5.5",TextColor3=THEME.TEXT,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,44,0,0),Size=UDim2.new(1,-160,1,0)},top)
     local menuBtn=mk("ImageButton",{AutoButtonColor=false,BackgroundColor3=THEME.BG3,Size=UDim2.new(0,28,0,24),Position=UDim2.new(0,8,0.5,0),AnchorPoint=Vector2.new(0,0.5),ImageTransparency=1},top)
     do
         local function bar(y)
