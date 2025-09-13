@@ -5835,7 +5835,7 @@ local function buildApp()
         end)
     end
 
-    -- ====================== FAIRY EVENT P2: DEBUGGER =======================
+    -- ====================== FALL MARKET: DEBUGGER =======================
     do
         local Players = game:GetService("Players")
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -5897,7 +5897,7 @@ local function buildApp()
             bb.Size = UDim2.new(0,240,0,50); bb.StudsOffsetWorldSpace = Vector3.new(0,6,0); bb.AlwaysOnTop=true
             bb.Parent = root
             local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.fromScale(1,1)
-            tl.Text = "[Fairy Event P2 debug]"; tl.TextColor3=Color3.new(1,1,1); tl.TextStrokeTransparency=0.2
+            tl.Text = "[Fall Market debug]"; tl.TextColor3=Color3.new(1,1,1); tl.TextStrokeTransparency=0.2
             tl.Font=Enum.Font.GothamBold; tl.TextScaled=true; tl.Parent=bb
             table.insert(DBG.labels, bb)
         end
@@ -6035,54 +6035,110 @@ local function buildApp()
 
         -- UI wrappers expected by Events page
         function revealFairyEventP2(toast)
-            -- Move FairyIsland and FairyGenius from ReplicatedStorage.Modules.UpdateService to Workspace/FairyStuff
-            local rs = game:GetService("ReplicatedStorage")
-            local source
-            local ok, err = pcall(function()
-                source = rs:WaitForChild("Modules"):WaitForChild("UpdateService")
-            end)
-            if not ok or not source then
-                warn("[FairyP2] Could not locate ReplicatedStorage.Modules.UpdateService:", err)
-                if toast then toast("Fairy Event P2: UpdateService not found") end
-                return
-            end
+            -- New behavior: move Fall-related folders into Workspace and hide any 'fairy' objects
+            local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-            local targetFolderName = "FairyStuff"
-            local target = Workspace:FindFirstChild(targetFolderName)
-            if not target then
-                target = Instance.new("Folder")
-                target.Name = targetFolderName
-                target.Parent = Workspace
-            end
+            -- === MOVE FALL FOLDERS ===
+            local function moveToWorkspace(path)
+                local success, result = pcall(function()
+                    return path
+                end)
 
-            _G.FairyOriginalParents = _G.FairyOriginalParents or {}
-            local itemsToMove = { "FairyIsland", "FairyGenius" }
-            local moved, missing = 0, {}
-
-            for _, name in ipairs(itemsToMove) do
-                local obj = source:FindFirstChild(name)
-                if obj then
-                    if not _G.FairyOriginalParents[obj] then
-                        _G.FairyOriginalParents[obj] = obj.Parent
-                    end
-                    obj.Parent = target
-                    moved = moved + 1
-                    print("[FairyP2] Moved:", obj.Name)
+                if success and result then
+                    -- prefer the existing Workspace variable if present
+                    local ws = workspace or Workspace
+                    result.Parent = ws
+                    print("Moved:", result:GetFullName(), "to Workspace")
                 else
-                    table.insert(missing, name)
-                    warn("[FairyP2] Not found:", name)
+                    warn("Could not move path")
                 end
             end
 
-            print("[FairyP2] Done moving FairyIsland and FairyGenius into Workspace/" .. targetFolderName)
-            if toast then
-                local msg = ("Fairy Event P2: moved %d item(s) into Workspace/%s"):format(moved, targetFolderName)
-                if #missing > 0 then msg = msg .. " (missing: " .. table.concat(missing, ", ") .. ")" end
-                toast(msg)
+            -- Move FallMarketEvent
+            local fallMarketEvent = ReplicatedStorage:WaitForChild("GameEvents"):FindFirstChild("FallMarketEvent")
+            if fallMarketEvent then
+                moveToWorkspace(fallMarketEvent)
             end
+
+            -- Move Fall Festival
+            local modules = ReplicatedStorage:FindFirstChild("Modules")
+            local updateService = modules and modules:FindFirstChild("UpdateService")
+            local fallFestival = updateService and updateService:FindFirstChild("Fall Festival")
+            if fallFestival then
+                moveToWorkspace(fallFestival)
+            end
+
+            -- === HIDE FAIRY OBJECTS ===
+            local function hideObject(obj)
+                if obj:IsA("BasePart") then
+                    obj.Transparency = 1
+                    obj.CanCollide = false
+                elseif obj:IsA("Model") then
+                    pcall(function()
+                        if obj.PrimaryPart then
+                            obj:MoveTo(Vector3.new(0, -1000, 0))
+                        else
+                            -- move model root if no primary part
+                            obj:MoveTo(Vector3.new(0, -1000, 0))
+                        end
+                    end)
+                elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                    obj.Transparency = 1
+                elseif obj:IsA("GuiObject") then
+                    obj.Visible = false
+                elseif obj:IsA("Sound") then
+                    pcall(function() obj:Stop() end)
+                else
+                    -- If it's something else, just throw it into ReplicatedStorage for safekeeping
+                    pcall(function() obj.Parent = ReplicatedStorage end)
+                end
+            end
+
+            local processed = 0
+            for _, obj in pairs(game:GetDescendants()) do
+                local name = tostring(obj.Name or ""):lower()
+                if string.find(name, "fairy") then
+                    hideObject(obj)
+                    processed = processed + 1
+                    print("Hid:", obj:GetFullName())
+                end
+            end
+
+            if toast then toast(("Processed harvest objects: %d"):format(processed)) end
         end
         function clearFairyP2ClientClones(toast)
-            -- Restore moved items back to their original parents when possible
+            -- Hide client clones (don't destroy) and attempt to reshow original fairy assets
+            local hidden = 0
+            -- Hide any client clones we previously spawned
+            if DBG and DBG.clones then
+                for _, c in ipairs(DBG.clones) do
+                    if c and c.Parent then
+                        local ok, _ = pcall(function()
+                            for _,d in ipairs(c:GetDescendants()) do
+                                if d:IsA("BasePart") then d.Transparency = 1; d.CanCollide = false
+                                elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 1
+                                elseif d:IsA("GuiObject") then d.Visible = false
+                                elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then d.Enabled = false
+                                elseif d:IsA("ProximityPrompt") then d.Enabled = false
+                                elseif d:IsA("Sound") then pcall(function() d:Stop() end)
+                                end
+                            end
+                            -- Move hidden clones out of the way (underground)
+                            if c:IsA("Model") then
+                                pcall(function()
+                                    local pp = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart", true)
+                                    if pp then pp.CFrame = CFrame.new(0, -1000, 0) end
+                                end)
+                            elseif c:IsA("BasePart") then
+                                c.Transparency = 1; c.CanCollide = false
+                            end
+                        end)
+                        hidden = hidden + 1
+                    end
+                end
+            end
+
+            -- Restore moved Fall Market items back to their original parents when possible
             local target = Workspace:FindFirstChild("FairyStuff")
             local restored = 0
             local parents = _G.FairyOriginalParents or {}
@@ -6109,7 +6165,51 @@ local function buildApp()
                 if #target:GetChildren() == 0 then target:Destroy() end
             end
 
-            if toast then toast(restored > 0 and "Fairy Event P2: restored moved items" or "Fairy Event P2: nothing to restore") end
+            -- Attempt to reshow any fairy-related objects that were hidden earlier
+            local reshown = 0
+            for _, obj in ipairs(game:GetDescendants()) do
+                local name = tostring(obj.Name or ""):lower()
+                if string.find(name, "fairy") then
+                    pcall(function()
+                        if obj:IsA("BasePart") then
+                            obj.Transparency = 0; obj.CanCollide = true
+                        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                            obj.Transparency = 0
+                        elseif obj:IsA("GuiObject") then
+                            obj.Visible = true
+                        elseif obj:IsA("Model") then
+                            -- Try to move model to workspace root if it's underground
+                            if obj.PrimaryPart then
+                                local y = obj.PrimaryPart.Position.Y
+                                if y < -500 then
+                                    pcall(function() obj:MoveTo(Vector3.new(0, 5, 0)) end)
+                                end
+                            end
+                            -- Also unhide descendants
+                            for _,d in ipairs(obj:GetDescendants()) do
+                                if d:IsA("BasePart") then d.Transparency = 0; d.CanCollide = true
+                                elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 0
+                                elseif d:IsA("GuiObject") then d.Visible = true
+                                elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then d.Enabled = true
+                                elseif d:IsA("ProximityPrompt") then d.Enabled = true
+                                end
+                            end
+                        elseif obj:IsA("Sound") then
+                            -- leave stopped; user can manually resume if needed
+                        end
+                    end)
+                    reshown = reshown + 1
+                end
+            end
+
+            if toast then
+                local parts = {}
+                if restored > 0 then table.insert(parts, ("restored %d item(s)"):format(restored)) end
+                if hidden > 0 then table.insert(parts, ("hidden %d clone(s)"):format(hidden)) end
+                if reshown > 0 then table.insert(parts, ("reshow %d fairy obj(s)"):format(reshown)) end
+                if #parts == 0 then toast("Fall Market: nothing to restore/hide")
+                else toast("Fall Market: " .. table.concat(parts, "; ")) end
+            end
         end
     end
 
@@ -6388,11 +6488,11 @@ local function buildApp()
             local ok = select(1, restartFairyTrack()); toast(ok and "Restarted Fairy Track" or "Restart failed")
         end)
 
-        -- NEW: Fairy Event P2 Tools
-        local beanSection = makeCollapsibleSection(P.Body, "Fairy Event P2", false)
+    -- NEW: Fall Market Tools
+    local beanSection = makeCollapsibleSection(P.Body, "Fall Market", false)
         local rowReveal = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
         corner(rowReveal,8); stroke(rowReveal,1,THEME.BORDER); pad(rowReveal,6,6,6,6)
-        local btnReveal = mk("TextButton",{Text="Bring FairyGenius & FairyIsland into Workspace",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowReveal)
+        local btnReveal = mk("TextButton",{Text="Show Fall Market & Hide Fairy Event",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowReveal)
         corner(btnReveal,8); stroke(btnReveal,1,THEME.BORDER); hover(btnReveal,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnReveal.MouseButton1Click:Connect(function()
             revealFairyEventP2(toast)
@@ -6400,7 +6500,7 @@ local function buildApp()
 
         local rowClear = mk("Frame",{BackgroundColor3=THEME.CARD,Size=UDim2.new(1,0,0,46)},beanSection)
         corner(rowClear,8); stroke(rowClear,1,THEME.BORDER); pad(rowClear,6,6,6,6)
-        local btnClear = mk("TextButton",{Text="Hide/Remove Fairy Client Clones",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClear)
+        local btnClear = mk("TextButton",{Text="Hide/Remove Fall Market Clones",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowClear)
         corner(btnClear,8); stroke(btnClear,1,THEME.BORDER); hover(btnClear,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
         btnClear.MouseButton1Click:Connect(function()
             clearFairyP2ClientClones(toast)
@@ -6411,6 +6511,7 @@ local function buildApp()
         corner(rowTp,8); stroke(rowTp,1,THEME.BORDER); pad(rowTp,6,6,6,6)
         local btnTp = mk("TextButton",{Text="Teleport to Fairy Island",Font=FONTS.H,TextSize=16,TextColor3=THEME.TEXT,BackgroundColor3=THEME.BG2,Size=UDim2.new(1,0,1,0),AutoButtonColor=false},rowTp)
         corner(btnTp,8); stroke(btnTp,1,THEME.BORDER); hover(btnTp,{BackgroundColor3=THEME.BG3},{BackgroundColor3=THEME.BG2})
+    btnTp.Visible = false
         btnTp.MouseButton1Click:Connect(function()
             -- Auto TP to FairyIsland.TeleportDestination, hold 2s, then auto-disable
             -- paste in console
